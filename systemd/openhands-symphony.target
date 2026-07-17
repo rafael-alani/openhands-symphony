@@ -1,0 +1,7 @@
+[Unit]
+Description=OpenHands Symphony stack
+Wants=openhands-symphony-firewall.service openhands-agent-keyring.service openhands-browser.service openhands-canvas.service openhands-symphony.service openhands-symphony-reconcile.timer
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target

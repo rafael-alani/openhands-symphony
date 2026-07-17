@@ -1,0 +1,21 @@
+[Unit]
+Description=Private D-Bus session for subscription-authenticated agent workers
+PartOf=openhands-symphony.target
+
+[Service]
+Type=simple
+User=openhands-agent
+Group=openhands-agent
+RuntimeDirectory=openhands-agent
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/dbus-daemon --session --nofork --nopidfile --address=unix:path=/run/openhands-agent/bus
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/openhands-agent
+
+[Install]
+WantedBy=openhands-symphony.target

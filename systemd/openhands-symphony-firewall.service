@@ -1,0 +1,20 @@
+[Unit]
+Description=OpenHands Symphony private-port firewall
+Before=openhands-browser.service openhands-canvas.service openhands-symphony.service
+PartOf=openhands-symphony.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStartPre=-/usr/sbin/nft delete table inet openhands_symphony
+ExecStart=/usr/sbin/nft -f /opt/openhands-symphony/packaging/openhands-symphony.nft
+ExecStop=-/usr/sbin/nft delete table inet openhands_symphony
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=openhands-symphony.target

@@ -1,0 +1,2 @@
+openhands-symphony ALL=(openhands-validator) NOPASSWD: ALL
+openhands-symphony ALL=(root) NOPASSWD: /usr/sbin/nft list table inet openhands_symphony

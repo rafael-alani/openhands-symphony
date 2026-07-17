@@ -1,0 +1,24 @@
+[Unit]
+Description=Secret Service keyring for subscription-authenticated agent workers
+After=openhands-agent-dbus.service
+Requires=openhands-agent-dbus.service
+PartOf=openhands-symphony.target
+
+[Service]
+Type=simple
+User=openhands-agent
+Group=openhands-agent
+Environment=HOME=/var/lib/openhands-agent
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/openhands-agent/bus
+ExecStart=/usr/bin/gnome-keyring-daemon --foreground --components=secrets
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/openhands-agent
+UMask=0077
+
+[Install]
+WantedBy=openhands-symphony.target

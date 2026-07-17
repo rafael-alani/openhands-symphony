@@ -1,0 +1,14 @@
+[Unit]
+Description=Reconcile GitHub agent work every five minutes
+PartOf=openhands-symphony.target
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+Persistent=true
+Unit=openhands-symphony-reconcile.service
+
+[Install]
+WantedBy=openhands-symphony.target
+

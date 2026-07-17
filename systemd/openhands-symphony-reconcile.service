@@ -1,0 +1,21 @@
+[Unit]
+Description=OpenHands Symphony reconciliation safety pass
+After=openhands-symphony.service
+PartOf=openhands-symphony.target
+
+[Service]
+Type=oneshot
+User=openhands-symphony
+Group=openhands-symphony
+SupplementaryGroups=openhands-agents
+Environment=HOME=/var/lib/openhands-symphony
+Environment=PATH=/opt/provider-clis/node_modules/.bin:/opt/openhands-acp/node_modules/.bin:/var/lib/openhands-symphony/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SYMPHONY_CONFIG=/etc/openhands-symphony/config.toml
+Environment=GH_CONFIG_DIR=/var/lib/openhands-symphony/github
+ExecStart=/opt/openhands-symphony-tool/bin/agentctl reconcile
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/openhands-symphony /var/log/openhands-symphony
+UMask=0077

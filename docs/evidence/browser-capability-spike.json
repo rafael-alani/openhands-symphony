@@ -1,0 +1,19 @@
+{
+  "browser_harness_version": "0.1.5",
+  "browser_use_version": "0.13.4",
+  "chromium_product": "Chrome for Testing 149.0.7827.55",
+  "direct_cdp_result": {
+    "title": "Example Domain",
+    "url": "https://example.com/"
+  },
+  "environment_policy": {
+    "api_key_present": false,
+    "cdp_loopback": true,
+    "cloud_sync": false,
+    "telemetry": false
+  },
+  "platform": "macOS arm64 local interface spike",
+  "playwright_version": "1.61.0",
+  "tested_at": "2026-07-16",
+  "ubuntu_vm_acceptance_pending": true
+}

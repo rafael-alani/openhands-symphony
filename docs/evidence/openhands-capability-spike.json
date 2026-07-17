@@ -1,0 +1,14 @@
+{
+  "agent_canvas_version": "1.4.0",
+  "agent_server_version": "1.35.0",
+  "cancel_resume": {
+    "interrupt_state": "paused",
+    "resumed_state": "finished"
+  },
+  "credential_file_visible_to_acp_subprocess": true,
+  "date": "2026-07-16",
+  "initial_message_starts_run": true,
+  "sdk_version": "1.35.0",
+  "two_concurrent_conversations": true,
+  "workspace_isolation": true
+}

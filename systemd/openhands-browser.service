@@ -1,0 +1,26 @@
+[Unit]
+Description=Private headless Chromium CDP endpoint for coding agents
+After=network-online.target
+Wants=network-online.target
+Requires=openhands-symphony-firewall.service
+PartOf=openhands-symphony.target
+
+[Service]
+Type=simple
+User=openhands-agent
+Group=openhands-agent
+Environment=HOME=/var/lib/openhands-agent
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/browser-use/chromium
+Environment=SYMPHONY_BROWSER_PROFILE=/var/lib/openhands-agent/browser/chromium-profile
+ExecStart=/opt/openhands-symphony/scripts/launch_headless_browser.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/openhands-agent/browser
+UMask=0077
+
+[Install]
+WantedBy=openhands-symphony.target

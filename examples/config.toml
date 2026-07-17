@@ -1,0 +1,84 @@
+[service]
+state_dir = "/var/lib/openhands-symphony"
+workspace_dir = "/var/lib/openhands-symphony/workspaces"
+report_dir = "/var/lib/openhands-symphony/reports"
+log_dir = "/var/log/openhands-symphony"
+listen_host = "127.0.0.1"
+listen_port = 8787
+webhook_secret_file = "/etc/openhands-symphony/webhook-secret"
+agent_server_url = "http://127.0.0.1:8000"
+agent_server_api_key_file = "/etc/openhands-symphony/canvas.env"
+# Deliberately empty. This is not a speculative provider-system-prompt override.
+global_agent_instruction = ""
+validation_user = "openhands-validator"
+
+[github]
+allowed_repositories = ["CHANGE_ME/CHANGE_ME"]
+private_only = true
+auth_mode = "gh"
+generated_pr_label = "generated-by-agent"
+bot_login = ""
+
+[scheduler]
+poll_seconds = 30
+reconcile_seconds = 300
+lease_seconds = 180
+heartbeat_seconds = 30
+global_concurrency = 2
+max_attempts = 3
+max_implementation_corrections = 1
+max_review_repairs = 1
+validation_timeout_seconds = 1800
+provider_backoff_base_seconds = 120
+provider_backoff_max_seconds = 3600
+
+[scheduler.provider_concurrency]
+claude = 1
+codex = 1
+antigravity = 1
+
+[providers.claude]
+enabled = true
+adapter = "openhands-acp"
+acp_command = ["/opt/openhands-symphony/scripts/claude_acp_wrapper.sh"]
+auth_command = ["/opt/provider-clis/node_modules/.bin/claude", "auth", "status"]
+auth_marker_file = "/var/lib/openhands-auth-status/claude.json"
+timeout_seconds = 7200
+manual_command = ["/opt/provider-clis/node_modules/.bin/claude"]
+
+[providers.codex]
+enabled = true
+adapter = "openhands-acp"
+acp_command = ["/opt/openhands-symphony/scripts/codex_acp_wrapper.sh"]
+auth_command = ["/opt/provider-clis/node_modules/.bin/codex", "login", "status"]
+auth_marker_file = "/var/lib/openhands-auth-status/codex.json"
+timeout_seconds = 7200
+manual_command = ["/opt/provider-clis/node_modules/.bin/codex"]
+
+[providers.antigravity]
+# The official headless interface and bridge are implemented, but autonomous
+# use stays disabled until this VM passes the subscription-backed smoke test.
+enabled = false
+adapter = "openhands-acp"
+acp_command = ["/opt/antigravity-acp/bin/python", "/opt/openhands-symphony/scripts/antigravity_acp_bridge.py"]
+auth_command = ["agy", "models"]
+auth_marker_file = "/var/lib/openhands-auth-status/antigravity.json"
+timeout_seconds = 7200
+manual_command = ["agy"]
+
+[repositories."CHANGE_ME/CHANGE_ME"]
+concurrency_scope = "repository"
+# Set this to a stable project scope to allow independent monorepo projects.
+concurrency_key = ""
+# Array-of-arrays: no shell is involved. Include every required formatter,
+# linter, type checker, test, and build, or provide .openhands/quality-gate.sh.
+validation_commands = [
+  ["npm", "run", "format:check"],
+  ["npm", "run", "lint"],
+  ["npm", "run", "typecheck"],
+  ["npm", "test", "--", "--runInBand"],
+  ["npm", "run", "build"],
+]
+setup_script = ".openhands/setup.sh"
+instruction = ""
+approval_policy = "safe-code-only"

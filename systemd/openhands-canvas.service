@@ -1,0 +1,43 @@
+[Unit]
+Description=OpenHands Agent Canvas control plane
+After=network-online.target openhands-symphony-firewall.service openhands-agent-keyring.service openhands-browser.service
+Wants=network-online.target
+Requires=openhands-symphony-firewall.service openhands-agent-keyring.service openhands-browser.service
+PartOf=openhands-symphony.target
+
+[Service]
+Type=simple
+User=openhands-agent
+Group=openhands-agent
+SupplementaryGroups=openhands-agents
+Environment=HOME=/var/lib/openhands-agent
+Environment=BROWSER_USE_HOME=/var/lib/openhands-agent/browser
+Environment=BROWSER_HARNESS_HOME=/var/lib/openhands-agent/browser
+Environment=BH_AGENT_WORKSPACE=/var/lib/openhands-agent/browser/agent-workspace
+Environment=BU_CDP_URL=http://127.0.0.1:9222
+Environment=BH_TELEMETRY=0
+Environment=ANONYMIZED_TELEMETRY=false
+Environment=BROWSER_USE_CLOUD_SYNC=false
+Environment=PATH=/opt/provider-clis/node_modules/.bin:/opt/openhands-acp/node_modules/.bin:/opt/browser-use/bin:/var/lib/openhands-agent/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DISABLE_AUTOUPDATER=1
+Environment=AGY_CLI_DISABLE_AUTO_UPDATE=true
+Environment=SYMPHONY_AGY_PATH=/usr/local/bin/agy
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/openhands-agent/bus
+Environment=GIT_OPTIONAL_LOCKS=0
+Environment=DO_NOT_TRACK=1
+EnvironmentFile=/etc/openhands-symphony/canvas.env
+Environment=OH_AGENT_SERVER_VERSION=1.35.0
+Environment=OH_AUTOMATION_VERSION=1.1.6
+ExecStart=/opt/openhands-canvas/node_modules/.bin/agent-canvas --port 8000
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/openhands-agent /var/lib/openhands-symphony/workspaces
+UMask=0007
+
+[Install]
+WantedBy=openhands-symphony.target

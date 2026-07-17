@@ -23,6 +23,8 @@ Claiming atomically inserts a lease, moves `queued` to `running`, increments the
 
 At restart, unexpired leases remain authoritative. After expiry, reconciliation first interrupts the durable OpenHands implementation, reviewer, or repair conversation. Only after cancellation succeeds does it remove the lease and return implementation to `queued`; interrupted review work is requeued against the preserved PR. If the provider/cancel endpoint is unavailable, the job stops for guidance and is not made runnable. The next worker resumes the interrupted OpenHands conversation when supported or starts a fresh review process; attempts remain bounded.
 
+The same reconciliation pass replays trusted exact control comments missed while the service was offline. GitHub comment IDs are the idempotency key, so webhook redelivery and scheduled recovery cannot apply the same pause/resume/retry/cancel twice.
+
 ## Bounded loops
 
 - `max_attempts`: total implementation attempts, default 3.

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import random
 import shlex
 import threading
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -39,6 +42,7 @@ class Coordinator:
         self.reports = ReportWriter(config.service.report_dir, store)
         self._active_runs: dict[str, tuple[ProviderAdapter, ProviderRun]] = {}
         self._active_lock = threading.Lock()
+        self._operation_owner = f"coordinator:{uuid.uuid4()}"
         self._provider_slots = {
             name: threading.BoundedSemaphore(config.scheduler.provider_concurrency.get(name, 1))
             for name in providers
@@ -72,6 +76,13 @@ class Coordinator:
                 self._halt_ineligible(existing, snapshot, decision.reason or "live issue is no longer eligible")
             raise IntakeError(decision.reason)
 
+        try:
+            concurrency_key = self.config.concurrency_key(snapshot.repository, snapshot.labels)
+        except ValueError as exc:
+            if existing and existing.state in {JobState.QUEUED, JobState.RUNNING, JobState.REVIEWING}:
+                self._halt_ineligible(existing, snapshot, str(exc))
+            raise IntakeError(str(exc)) from None
+
         branch = branch_name(snapshot.number, snapshot.title)
         if existing:
             if existing.state == JobState.QUEUED and existing.attempt == 0:
@@ -81,13 +92,14 @@ class Coordinator:
                     review_provider=decision.review_provider,
                     review_required=decision.review_required,
                     branch=branch,
-                    concurrency_key=self.config.concurrency_key(snapshot.repository),
+                    concurrency_key=concurrency_key,
                 )
             elif existing.state in {JobState.QUEUED, JobState.RUNNING, JobState.REVIEWING} and (
                 existing.content_hash != snapshot.content_hash()
                 or existing.implementation_provider != decision.implementation_provider
                 or existing.review_provider != decision.review_provider
                 or existing.review_required != decision.review_required
+                or existing.concurrency_key != concurrency_key
             ):
                 self._halt_ineligible(existing, snapshot, "issue specification or routing changed after claim")
                 raise IntakeError("issue specification or routing changed after claim; explicitly resume to accept it")
@@ -101,7 +113,7 @@ class Coordinator:
             decision.review_provider,
             decision.review_required,
             branch,
-            self.config.concurrency_key(snapshot.repository),
+            concurrency_key,
         )
         if open_pr:
             job = self.store.update_job(
@@ -234,6 +246,7 @@ class Coordinator:
                 if summary != job.validation_summary:
                     job = self.store.update_job(job.id, validation_summary=summary)
                     self.store.record_event(job.id, "ci-observed", {"summary": self._ci_summary(context)})
+                    self.github.update_pr_validation(job, self._validation_markdown(job))
                     self._sync_status(job)
                     self.reports.write(self.store.get_job_by_id(job.id) or job)
                 results.append((job.repository, job.issue_number, f"ci: {self._ci_summary(context)}"))
@@ -249,7 +262,40 @@ class Coordinator:
                         results.append((repository, snapshot.number, f"ineligible: {exc}"))
             except GitHubError as exc:
                 results.append((repository, 0, f"github-error: {exc}"))
+            try:
+                for issue_number, comment_id, command in self.github.list_control_commands(repository):
+                    _, applied = self.apply_control_comment(repository, issue_number, comment_id, command)
+                    if applied:
+                        results.append((repository, issue_number, f"recovered command: {command}"))
+            except (GitHubError, StoreError, IntakeError) as exc:
+                results.append((repository, 0, f"command-reconcile-error: {exc}"))
         return results
+
+    def apply_control_comment(
+        self, repository: str, issue_number: int, comment_id: int, command: str
+    ) -> tuple[Job | None, bool]:
+        """Apply a trusted command exactly once across webhook and reconciliation processes."""
+        delivery_id = f"issue-comment:{repository}:{comment_id}"
+        if self.store.delivery_recorded(delivery_id):
+            return self.store.get_job(repository, issue_number), False
+        lock_name = f"control:{repository}:{comment_id}"
+        if not self.store.acquire_operation_lock(lock_name, self._operation_owner):
+            return self.store.get_job(repository, issue_number), False
+        try:
+            if self.store.delivery_recorded(delivery_id):
+                return self.store.get_job(repository, issue_number), False
+            job = self.control(repository, issue_number, command)
+            payload_hash = hashlib.sha256(f"{repository}#{issue_number}:{comment_id}:{command}".encode()).hexdigest()
+            self.store.record_delivery(
+                delivery_id,
+                "issue_comment_command",
+                payload_hash,
+                repository,
+                issue_number,
+            )
+            return job, True
+        finally:
+            self.store.release_operation_lock(lock_name, self._operation_owner)
 
     def recover_expired_leases(self) -> list[tuple[str, int, str]]:
         """Cancel durable provider work before making an expired lease runnable again."""
@@ -348,17 +394,33 @@ class Coordinator:
                 self.reports.write(self.store.get_job_by_id(job.id) or job)
                 return job
             job = self.store.accept_snapshot(job.id, snapshot)
+            try:
+                concurrency_key = self.config.concurrency_key(snapshot.repository, snapshot.labels)
+            except ValueError as exc:
+                job = self.store.transition(
+                    job.id,
+                    JobState.NEEDS_GUIDANCE,
+                    phase="invalid-concurrency-scope",
+                    actionable_message=f"Cannot resume with the current concurrency scope: {redact(str(exc), 2000)}",
+                )
+                self._sync_status(job)
+                self.reports.write(self.store.get_job_by_id(job.id) or job)
+                return job
             job = self.store.update_job(
                 job.id,
                 implementation_provider=decision.implementation_provider,
                 review_provider=decision.review_provider,
                 review_required=decision.review_required,
+                concurrency_key=concurrency_key,
             )
         self._sync_status(job)
         self.reports.write(self.store.get_job_by_id(job.id) or job)
         return job
 
     def _sync_status(self, job: Job) -> None:
+        lock_name = f"status:{job.id}"
+        if not self.store.acquire_operation_lock(lock_name, self._operation_owner):
+            return
         try:
             self.github.set_state_labels(job, job.state)
             refreshed = self.store.get_job_by_id(job.id) or job
@@ -368,6 +430,8 @@ class Coordinator:
         except (GitHubError, StaleIssueError):
             # Durable state/reporting remains authoritative while external control-plane state is unavailable.
             pass
+        finally:
+            self.store.release_operation_lock(lock_name, self._operation_owner)
 
     def _finish(self, job: Job) -> Job:
         current = self.store.get_job_by_id(job.id) or job
@@ -380,35 +444,25 @@ class Coordinator:
         event.set()
         thread.join(timeout=5)
 
-    def _start_heartbeat(
-        self,
-        job: Job,
-        provider: ProviderAdapter,
-        run: ProviderRun,
-    ) -> tuple[threading.Event, threading.Thread]:
+    def _start_heartbeat(self, job: Job) -> tuple[threading.Event, threading.Thread]:
         stop = threading.Event()
 
         def heartbeat() -> None:
             canceled = False
             while not stop.wait(self.config.scheduler.heartbeat_seconds):
                 if not self.store.renew_lease(job.id, job.lease_owner or "", self.config.scheduler.lease_seconds):
-                    if not canceled:
-                        provider.cancel(run)
+                    self._cancel_active_run(self.store.get_job_by_id(job.id) or job)
                     return
                 current = self.store.get_job_by_id(job.id)
                 if current and (current.cancel_requested or current.pause_requested) and not canceled:
                     canceled = True
-                    try:
-                        provider.cancel(run)
-                    except Exception:
-                        pass
+                    self._cancel_active_run(current)
 
         thread = threading.Thread(target=heartbeat, name=f"heartbeat-{job.id[:8]}", daemon=True)
         thread.start()
         return stop, thread
 
     def _wait(self, job: Job, provider: ProviderAdapter, run: ProviderRun):
-        stop, thread = self._start_heartbeat(job, provider, run)
         with self._active_lock:
             self._active_runs[job.id] = (provider, run)
         try:
@@ -416,7 +470,21 @@ class Coordinator:
         finally:
             with self._active_lock:
                 self._active_runs.pop(job.id, None)
-            self._stop_heartbeat(stop, thread)
+
+    def _require_live_lease(self, job: Job) -> None:
+        if not self.store.renew_lease(job.id, job.lease_owner or "", self.config.scheduler.lease_seconds):
+            raise StoreError("worker lease expired before external mutation")
+        live = self.github.get_issue(job.repository, job.issue_number)
+        try:
+            live_key = self.config.concurrency_key(job.repository, live.labels)
+        except ValueError as exc:
+            raise StaleIssueError(f"concurrency scope changed after claim: {exc}") from None
+        if live_key != job.concurrency_key:
+            raise StaleIssueError("concurrency scope changed after claim")
+
+    @staticmethod
+    def _with_jitter(seconds: int) -> int:
+        return seconds + random.SystemRandom().randint(0, max(1, min(seconds // 4, 60)))
 
     @contextmanager
     def _provider_slot(self, job: Job, provider: ProviderAdapter):
@@ -535,7 +603,14 @@ class Coordinator:
             if failure_kind == "quota":
                 backoff = self.config.scheduler.provider_backoff_base_seconds
                 detail = question or summary
-                self.store.set_provider_backoff(job.implementation_provider, detail, backoff)
+                if job.attempt >= self.config.scheduler.max_attempts:
+                    return self.store.transition(
+                        job.id,
+                        JobState.FAILED,
+                        phase="provider-quota-failure",
+                        terminal_reason=f"Provider quota/rate limit exhausted {job.attempt} attempts: {detail}",
+                    )
+                self.store.set_provider_backoff(job.implementation_provider, detail, self._with_jitter(backoff))
                 return self.store.transition(
                     job.id,
                     JobState.QUEUED,
@@ -557,7 +632,7 @@ class Coordinator:
                         self.config.scheduler.provider_backoff_max_seconds,
                     )
                     detail = question or summary
-                    self.store.set_provider_backoff(job.implementation_provider, detail, backoff)
+                    self.store.set_provider_backoff(job.implementation_provider, detail, self._with_jitter(backoff))
                     return self.store.transition(
                         job.id,
                         JobState.QUEUED,
@@ -584,10 +659,15 @@ class Coordinator:
         return None
 
     def run_claimed(self, claimed: Job) -> Job:
-        job = claimed
-        provider = self.providers[job.implementation_provider]
+        stop, thread = self._start_heartbeat(claimed)
         try:
-            self._sync_status(job)
+            return self._run_claimed(claimed)
+        finally:
+            self._stop_heartbeat(stop, thread)
+
+    def _run_claimed(self, claimed: Job) -> Job:
+        job = claimed
+        try:
             live = self.github.get_issue(job.repository, job.issue_number)
             decision = route(live, {job.review_provider} if job.review_provider else set())
             if live.content_hash() != job.content_hash:
@@ -598,7 +678,12 @@ class Coordinator:
                     actionable_message="Issue title or body changed after claim. Review the edit, then use /agent resume.",
                 )
                 return self._finish(job)
-            if not decision.eligible or decision.implementation_provider != job.implementation_provider:
+            if (
+                not decision.eligible
+                or decision.implementation_provider != job.implementation_provider
+                or decision.review_required != job.review_required
+                or decision.review_provider != job.review_provider
+            ):
                 job = self.store.transition(
                     job.id,
                     JobState.NEEDS_GUIDANCE,
@@ -606,6 +691,36 @@ class Coordinator:
                     actionable_message=f"Live routing no longer matches the claim: {decision.reason or 'provider changed'}.",
                 )
                 return self._finish(job)
+            try:
+                live_concurrency_key = self.config.concurrency_key(job.repository, live.labels)
+            except ValueError as exc:
+                job = self.store.transition(
+                    job.id,
+                    JobState.NEEDS_GUIDANCE,
+                    phase="concurrency-scope-changed",
+                    actionable_message=f"Live concurrency scope no longer matches the claim: {redact(str(exc), 2000)}",
+                )
+                return self._finish(job)
+            if live_concurrency_key != job.concurrency_key:
+                job = self.store.transition(
+                    job.id,
+                    JobState.NEEDS_GUIDANCE,
+                    phase="concurrency-scope-changed",
+                    actionable_message="Live concurrency scope no longer matches the claim.",
+                )
+                return self._finish(job)
+            provider = self.providers.get(job.implementation_provider)
+            if provider is None:
+                job = self.store.transition(
+                    job.id,
+                    JobState.NEEDS_GUIDANCE,
+                    phase="provider-configuration-changed",
+                    actionable_message=(
+                        f"Provider {job.implementation_provider!r} is no longer enabled; inspect configuration and retry."
+                    ),
+                )
+                return self._finish(job)
+            self._sync_status(job)
             if job.attempt > self.config.scheduler.max_attempts:
                 job = self.store.transition(
                     job.id,
@@ -650,7 +765,15 @@ class Coordinator:
             if quota.limited:
                 backoff = quota.retry_after_seconds or self.config.scheduler.provider_backoff_base_seconds
                 quota_detail = redact(quota.detail, 2000)
-                self.store.set_provider_backoff(job.implementation_provider, quota_detail, backoff)
+                if job.attempt >= self.config.scheduler.max_attempts:
+                    job = self.store.transition(
+                        job.id,
+                        JobState.FAILED,
+                        phase="provider-quota-failure",
+                        terminal_reason=(f"Provider quota/rate limit exhausted {job.attempt} attempts: {quota_detail}"),
+                    )
+                    return self._finish(job)
+                self.store.set_provider_backoff(job.implementation_provider, quota_detail, self._with_jitter(backoff))
                 job = self.store.transition(
                     job.id, JobState.QUEUED, phase="provider-backoff", actionable_message=quota_detail
                 )
@@ -752,11 +875,13 @@ class Coordinator:
 
             branch_exists = self.github.remote_branch_exists(job.repository, job.branch)
             branch_matches = branch_exists and self.workspaces.remote_matches(worktree, job.repository, job.branch)
+            self._require_live_lease(job)
             self.github.guard_code_mutation(job, allow_existing_branch=branch_matches)
             if not branch_matches:
                 self.workspaces.push(worktree, job.repository, job.branch)
 
             job = self.store.update_job(job.id, phase="pull-request")
+            self._require_live_lease(job)
             pr = self.github.create_draft_pr(
                 job,
                 f"[agent] {live.title}",
@@ -770,6 +895,8 @@ class Coordinator:
                 validation_summary=self._validation_with_ci(job.validation_summary, ci_context),
             )
             self.store.record_event(job.id, "ci-observed", {"summary": self._ci_summary(ci_context)})
+            self._require_live_lease(job)
+            self.github.update_pr_validation(job, self._validation_markdown(job))
             job = self.store.transition(job.id, JobState.PR_OPEN, phase="pr-open", release_lease=False)
             self._sync_status(job)
 
@@ -812,7 +939,7 @@ class Coordinator:
                     detail = redact(quota_state.detail or detail, 4000)
                     break
             if limited_provider:
-                self.store.set_provider_backoff(limited_provider, detail, retry_after)
+                self.store.set_provider_backoff(limited_provider, detail, self._with_jitter(retry_after))
                 if current.pr_number:
                     job = self.store.transition(
                         job.id,
@@ -845,7 +972,7 @@ class Coordinator:
                     self.config.scheduler.provider_backoff_base_seconds * (2 ** max(0, job.attempt - 1)),
                     self.config.scheduler.provider_backoff_max_seconds,
                 )
-                self.store.set_provider_backoff(job.implementation_provider, detail, backoff)
+                self.store.set_provider_backoff(job.implementation_provider, detail, self._with_jitter(backoff))
                 job = self.store.transition(
                     job.id,
                     JobState.QUEUED,
@@ -904,13 +1031,7 @@ class Coordinator:
             return self._finish(job)
 
     def _pr_body(self, job: Job, summary: str) -> str:
-        validations = self.store.validations(job.id)
-        lines = []
-        for result in validations:
-            command = shlex.join(json.loads(str(result["command_json"])))
-            status = "PASS" if result["exit_code"] == 0 and not result["timed_out"] else "FAIL"
-            lines.append(f"- `{command}` — **{status}** (exit `{result['exit_code']}`)")
-        validation = "\n".join(lines) or "- No validation ran (PR creation should have been blocked)."
+        validation = self._validation_markdown(job)
         return f"""Closes #{job.issue_number}
 
 ## Summary
@@ -927,13 +1048,26 @@ class Coordinator:
 
 {validation}
 
-Full command output is retained in the VM run report. No command is reported as passing unless the wrapper observed exit code zero.
-
 ## Unresolved risks
 
 - Human review and CI are still required before merge.
 - No production deployment or automatic merge was performed.
 """
+
+    def _validation_markdown(self, job: Job) -> str:
+        validations = self.store.validations(job.id)
+        lines = []
+        for result in validations:
+            command = shlex.join(json.loads(str(result["command_json"])))
+            status = "PASS" if result["exit_code"] == 0 and not result["timed_out"] else "FAIL"
+            lines.append(f"- `{command}` — **{status}** (exit `{result['exit_code']}`)")
+        if "; CI:" in job.validation_summary:
+            lines.append(f"- CI at last observation: `{job.validation_summary.split('; CI:', 1)[1].strip()}`")
+        evidence = "\n".join(lines) or "- No validation ran (PR creation should have been blocked)."
+        return (
+            evidence + "\n\nFull command output is retained in the VM run report. "
+            "No command is reported as passing unless the wrapper observed exit code zero."
+        )
 
     @staticmethod
     def _review_body(summary: str, provider: str, run_id: str, recommendation: str) -> str:
@@ -987,6 +1121,7 @@ Full command output is retained in the VM run report. No command is reported as 
             )
         repairs = 0
         while True:
+            self._require_live_lease(job)
             self.github.guard_code_mutation(job, allow_existing_branch=True)
             job = self.store.transition(job.id, JobState.REVIEWING, phase="independent-review", release_lease=False)
             github_context = json.dumps(
@@ -1039,6 +1174,7 @@ Full command output is retained in the VM run report. No command is reported as 
             # same bot identity. A COMMENT review is still a real PR review and
             # keeps the independent recommendation in the review body/event log.
             event = "comment"
+            self._require_live_lease(job)
             self.github.guard_code_mutation(job, allow_existing_branch=True)
             review_body = self._review_body(
                 review_result.summary, review_name, review_run.conversation_id, recommendation
@@ -1122,6 +1258,15 @@ Full command output is retained in the VM run report. No command is reported as 
             if self.workspaces.has_changes(worktree):
                 self.workspaces.verify_integrity(job, worktree)
                 self.workspaces.commit(worktree, job.issue_number)
+                self._require_live_lease(job)
                 self.github.guard_code_mutation(job, allow_existing_branch=True)
                 self.workspaces.push(worktree, job.repository, job.branch)
+            ci_context = self.github.pr_review_context(job.repository, job.pr_number or 0)
+            job = self.store.update_job(
+                job.id,
+                validation_summary=self._validation_with_ci(summary, ci_context),
+            )
+            self.store.record_event(job.id, "ci-observed", {"summary": self._ci_summary(ci_context)})
+            self._require_live_lease(job)
+            self.github.update_pr_validation(job, self._validation_markdown(job))
             self.store.record_event(job.id, "review-repair", {"pass": repairs})

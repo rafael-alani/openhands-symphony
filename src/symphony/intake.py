@@ -35,6 +35,7 @@ SYSTEM_STATE_LABELS = {
 ALL_LABELS = USER_CONTROLLED_LABELS | SYSTEM_STATE_LABELS | {"generated-by-agent"}
 
 CONTROL_PATTERN = re.compile(r"^/agent\s+(pause|resume|retry|cancel)\s*$", re.IGNORECASE)
+TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 

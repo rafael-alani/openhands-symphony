@@ -68,8 +68,12 @@ manual_command = ["agy"]
 
 [repositories."CHANGE_ME/CHANGE_ME"]
 concurrency_scope = "repository"
-# Set this to a stable project scope to allow independent monorepo projects.
+# For one fixed custom lock, use concurrency_scope="configured" and set this key.
 concurrency_key = ""
+# For independently serialized monorepo projects, use concurrency_scope="label"
+# and map operator-created labels to stable scope keys. Exactly one mapped label
+# must be present on every routed issue in that mode.
+concurrency_labels = { "project:frontend" = "frontend", "project:backend" = "backend" }
 # Array-of-arrays: no shell is involved. Include every required formatter,
 # linter, type checker, test, and build, or provide .openhands/quality-gate.sh.
 validation_commands = [

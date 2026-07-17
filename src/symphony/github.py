@@ -6,7 +6,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .intake import SYSTEM_STATE_LABELS, route, validate_repository_name
+from .intake import SYSTEM_STATE_LABELS, TRUSTED_ASSOCIATIONS, parse_control_command, route, validate_repository_name
 from .models import IssueSnapshot, Job, JobState
 
 STATUS_MARKER = "<!-- openhands-symphony-status -->"
@@ -35,9 +35,11 @@ class GitHubBackend(Protocol):
     def remote_branch_exists(self, repository: str, branch: str) -> bool: ...
     def guard_code_mutation(self, job: Job, *, allow_existing_branch: bool) -> IssueSnapshot: ...
     def recent_issue_comments(self, repository: str, issue_number: int) -> list[str]: ...
+    def list_control_commands(self, repository: str) -> list[tuple[int, int, str]]: ...
     def update_status_comment(self, job: Job, body: str) -> int: ...
     def set_state_labels(self, job: Job, state: JobState) -> None: ...
     def create_draft_pr(self, job: Job, title: str, body: str, generated_label: str) -> PullRequest: ...
+    def update_pr_validation(self, job: Job, validation: str) -> None: ...
     def pr_review_context(self, repository: str, pr_number: int) -> dict[str, Any]: ...
     def pr_state(self, repository: str, pr_number: int) -> dict[str, Any]: ...
     def post_review(self, repository: str, pr_number: int, body: str, event: str) -> None: ...
@@ -90,6 +92,17 @@ class GhCLIBackend:
             if not self._resolved_bot_login:
                 raise GitHubError("unable to resolve the authenticated GitHub login")
         return self._resolved_bot_login
+
+    def _paginated_issue_comments(self, repository: str, path: str) -> list[dict[str, Any]]:
+        pages = self._run(["api", "--paginate", "--slurp", path], json_output=True)
+        if not isinstance(pages, list):
+            raise GitHubError("gh returned an invalid paginated comment response")
+        comments: list[dict[str, Any]] = []
+        for page in pages:
+            if not isinstance(page, list):
+                raise GitHubError("gh returned an invalid comment page")
+            comments.extend(row for row in page if isinstance(row, dict))
+        return comments
 
     def get_issue(self, repository: str, issue_number: int) -> IssueSnapshot:
         self._allowed(repository)
@@ -191,6 +204,24 @@ class GhCLIBackend:
             result.append(f"Comment by {author}:\n{body}")
         return result
 
+    def list_control_commands(self, repository: str) -> list[tuple[int, int, str]]:
+        """List trusted exact commands repository-wide so reconciliation can recover missed webhooks."""
+        self._allowed(repository)
+        rows = self._paginated_issue_comments(
+            repository,
+            f"repos/{repository}/issues/comments?per_page=100&sort=created&direction=asc",
+        )
+        commands: list[tuple[int, int, str]] = []
+        for row in rows:
+            command = parse_control_command(str(row.get("body") or ""))
+            association = str(row.get("author_association") or "").upper()
+            issue_url = str(row.get("issue_url") or "")
+            number = issue_url.rsplit("/", 1)[-1]
+            comment_id = row.get("id")
+            if command and association in TRUSTED_ASSOCIATIONS and number.isdigit() and comment_id is not None:
+                commands.append((int(number), int(comment_id), command))
+        return commands
+
     def _live_issue_guard(self, job: Job) -> IssueSnapshot:
         live = self.get_issue(job.repository, job.issue_number)
         if live.state.lower() != "open":
@@ -210,7 +241,12 @@ class GhCLIBackend:
         if live.content_hash() != job.content_hash:
             raise StaleIssueError("issue title or body changed after claim")
         decision = route(live, {job.review_provider} if job.review_provider else set())
-        if not decision.eligible or decision.implementation_provider != job.implementation_provider:
+        if (
+            not decision.eligible
+            or decision.implementation_provider != job.implementation_provider
+            or decision.review_required != job.review_required
+            or decision.review_provider != job.review_provider
+        ):
             raise StaleIssueError(f"routing changed after claim: {decision.reason or 'provider changed'}")
         pr = self.find_open_pr(job.repository, job.branch)
         if pr and pr.number != job.pr_number:
@@ -220,9 +256,9 @@ class GhCLIBackend:
         return live
 
     def _find_status_comment(self, repository: str, issue_number: int) -> int | None:
-        comments = self._run(
-            ["api", "--paginate", f"repos/{repository}/issues/{issue_number}/comments?per_page=100"],
-            json_output=True,
+        comments = self._paginated_issue_comments(
+            repository,
+            f"repos/{repository}/issues/{issue_number}/comments?per_page=100",
         )
         for comment in comments:
             author = str((comment.get("user") or {}).get("login") or "")
@@ -353,6 +389,25 @@ class GhCLIBackend:
             raise StaleIssueError("issue title or body changed before PR labeling")
         self._run(["pr", "edit", str(pr.number), "--repo", job.repository, "--add-label", generated_label])
         return pr
+
+    def update_pr_validation(self, job: Job, validation: str) -> None:
+        """Replace the generated PR's validation section after a repair pass."""
+        if not job.pr_number:
+            raise GitHubError("cannot update validation evidence before a PR exists")
+        current = self._run(
+            ["pr", "view", str(job.pr_number), "--repo", job.repository, "--json", "body,headRefName,state"],
+            json_output=True,
+        )
+        if str(current.get("state") or "").upper() != "OPEN" or str(current.get("headRefName") or "") != job.branch:
+            raise StaleIssueError("implementation PR is no longer open on the generated branch")
+        body = str(current.get("body") or "")
+        start = body.find("## Validation\n")
+        end = body.find("\n## Unresolved risks", start + 1)
+        if start < 0 or end < 0:
+            raise GitHubError("generated PR body is missing its validation section")
+        updated = body[:start] + f"## Validation\n\n{validation}\n" + body[end:]
+        self.guard_code_mutation(job, allow_existing_branch=True)
+        self._run(["pr", "edit", str(job.pr_number), "--repo", job.repository, "--body", updated])
 
     def pr_review_context(self, repository: str, pr_number: int) -> dict[str, Any]:
         self._allowed(repository)

@@ -18,7 +18,7 @@ Work only inside the provided isolated workspace. Do not use gh, push, create pu
 
 Respect repository-native AGENTS.md, CLAUDE.md, project documentation, OpenHands skills, setup scripts, and hooks. Inspect before editing. Implement the smallest complete solution, run relevant local validation, and leave all intended changes in the workspace. Never claim a command passed unless you observed it pass.
 
-When browser validation is relevant, the local `browser-use` CLI is connected to a private headless Chromium CDP endpoint. Its direct pattern is `browser-use <<'PY'`, then helpers such as `new_tab("https://example.com")`, `wait_for_load()`, `page_info()`, and `capture_screenshot()`, followed by `PY`. Use only that direct local mode. Do not run `browser-use auth`, `start_remote_daemon`, or any cloud/profile-sync helper; do not request a Browser Use/model API key, export browser credentials, or start tunnels.
+When browser validation is relevant, the local `browser-harness` CLI is connected to a private headless Chromium CDP endpoint. Its direct pattern is `browser-harness <<'PY'`, then helpers such as `new_tab("https://example.com")`, `wait_for_load()`, `page_info()`, and `capture_screenshot()`, followed by `PY`. Use only that direct local mode. Do not run Browser Use cloud authentication, `start_remote_daemon`, or any cloud/profile-sync helper; do not request a Browser Use/model API key, export browser credentials, or start tunnels.
 
 Stop and request guidance instead of guessing when blocked by a missing product decision, secret, credential, inaccessible service, destructive migration, or materially ambiguous requirement. At the end, emit exactly one single-line result record using this prefix:
 

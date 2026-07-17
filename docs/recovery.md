@@ -10,6 +10,8 @@ sudo -iu openhands-symphony agentctl status
 
 Unexpired leases are not stolen. For an expired lease, reconciliation identifies the durable implementation, reviewer, or repair conversation and interrupts it through the provider adapter before making the job runnable. Cancellation failure produces a guidance state instead of risking two workers. A canceled implementation conversation may then resume when supported; interrupted review work starts a fresh review against the preserved PR. Existing worktrees, matching remote branches, canonical comments, and PRs are adopted rather than recreated.
 
+Reconciliation also scans trusted repository issue comments for exact `/agent` commands. Each command is durably coalesced by GitHub comment ID across the webhook and timer processes, recovering operator controls missed during VM downtime.
+
 ## Backup
 
 Stop the stack for the simplest consistent filesystem backup:

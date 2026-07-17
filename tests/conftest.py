@@ -8,6 +8,7 @@ import pytest
 
 from symphony.config import Config, GitHubConfig, ProviderConfig, RepositoryConfig, SchedulerConfig, ServiceConfig
 from symphony.github import PullRequest, StaleIssueError
+from symphony.intake import route
 from symphony.models import IssueSnapshot, Job, JobState
 
 
@@ -24,7 +25,9 @@ class FakeGitHub:
         self.guard_calls = 0
         self.reviews: list[tuple[str, int, str, str]] = []
         self.pr_bodies: list[str] = []
+        self.pr_body_updates: list[str] = []
         self.merged_prs: set[tuple[str, int]] = set()
+        self.control_commands: dict[str, list[tuple[int, int, str]]] = {}
 
     def get_issue(self, repository: str, issue_number: int) -> IssueSnapshot:
         return self.issues[(repository, issue_number)]
@@ -48,6 +51,9 @@ class FakeGitHub:
     def recent_issue_comments(self, repository: str, issue_number: int) -> list[str]:
         return []
 
+    def list_control_commands(self, repository: str) -> list[tuple[int, int, str]]:
+        return self.control_commands.get(repository, [])
+
     def guard_code_mutation(self, job: Job, *, allow_existing_branch: bool) -> IssueSnapshot:
         self.guard_calls += 1
         issue = self.get_issue(job.repository, job.issue_number)
@@ -55,6 +61,14 @@ class FakeGitHub:
             raise StaleIssueError("issue is no longer mutable")
         if issue.content_hash() != job.content_hash:
             raise StaleIssueError("issue title or body changed after claim")
+        decision = route(issue, {job.review_provider} if job.review_provider else set())
+        if (
+            not decision.eligible
+            or decision.implementation_provider != job.implementation_provider
+            or decision.review_required != job.review_required
+            or decision.review_provider != job.review_provider
+        ):
+            raise StaleIssueError("routing changed after claim")
         existing = self.find_open_pr(job.repository, job.branch)
         if existing and existing.number != job.pr_number:
             raise StaleIssueError("PR already exists")
@@ -100,6 +114,9 @@ class FakeGitHub:
 
     def post_review(self, repository: str, pr_number: int, body: str, event: str) -> None:
         self.reviews.append((repository, pr_number, body, event))
+
+    def update_pr_validation(self, job: Job, validation: str) -> None:
+        self.pr_body_updates.append(validation)
 
     def pr_review_context(self, repository: str, pr_number: int) -> dict[str, object]:
         return {

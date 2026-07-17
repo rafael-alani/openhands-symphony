@@ -106,14 +106,14 @@ if ! id "${SERVICE_USER}" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir "${STATE_DIR}" --gid "${SERVICE_USER}" --groups "${SHARED_GROUP},${AUTH_GROUP}" --shell /bin/bash "${SERVICE_USER}"
 fi
 if ! id "${AGENT_USER}" >/dev/null 2>&1; then
-  useradd --system --create-home --home-dir "${AGENT_STATE_DIR}" --gid "${AGENT_USER}" --groups "${SHARED_GROUP},${AUTH_GROUP}" --shell /bin/bash "${AGENT_USER}"
+  useradd --system --create-home --home-dir "${AGENT_STATE_DIR}" --gid "${AGENT_USER}" --groups "${SHARED_GROUP}" --shell /bin/bash "${AGENT_USER}"
 fi
 if ! id "${VALIDATOR_USER}" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir "${VALIDATOR_STATE_DIR}" --gid "${VALIDATOR_USER}" --groups "${SHARED_GROUP}" --shell /usr/sbin/nologin "${VALIDATOR_USER}"
 fi
-usermod -g "${SERVICE_USER}" -a -G "${SHARED_GROUP},${AUTH_GROUP}" "${SERVICE_USER}"
-usermod -g "${AGENT_USER}" -a -G "${SHARED_GROUP},${AUTH_GROUP}" "${AGENT_USER}"
-usermod -g "${VALIDATOR_USER}" -a -G "${SHARED_GROUP}" "${VALIDATOR_USER}"
+usermod -g "${SERVICE_USER}" -G "${SHARED_GROUP},${AUTH_GROUP}" "${SERVICE_USER}"
+usermod -g "${AGENT_USER}" -G "${SHARED_GROUP}" "${AGENT_USER}"
+usermod -g "${VALIDATOR_USER}" -G "${SHARED_GROUP}" "${VALIDATOR_USER}"
 install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 0700 \
   "${STATE_DIR}" "${STATE_DIR}/reports" "${STATE_DIR}/github" "${LOG_DIR}"
 install -d -o "${SERVICE_USER}" -g "${SHARED_GROUP}" -m 2770 "${STATE_DIR}/workspaces"
@@ -182,6 +182,7 @@ ln -sfn /opt/openhands-symphony-tool/bin/openhands-symphony /usr/local/bin/openh
 ln -sfn /opt/provider-clis/node_modules/.bin/claude /usr/local/bin/claude
 ln -sfn /opt/provider-clis/node_modules/.bin/codex /usr/local/bin/codex
 ln -sfn /opt/browser-use/bin/browser-use /usr/local/bin/browser-use
+ln -sfn /opt/browser-use/bin/browser-harness /usr/local/bin/browser-harness
 if [[ -x "${AGY_PATH}" ]]; then
   ln -sfn "${AGY_PATH}" /usr/local/bin/agy
 fi
@@ -199,7 +200,7 @@ if [[ ! -f "${CONFIG_DIR}/canvas.env" ]]; then
   umask 077
   echo "LOCAL_BACKEND_API_KEY=$(openssl rand -hex 32)" > "${CONFIG_DIR}/canvas.env"
 fi
-chown root:"${AUTH_GROUP}" "${CONFIG_DIR}/canvas.env"
+chown root:"${SERVICE_USER}" "${CONFIG_DIR}/canvas.env"
 chmod 0640 "${CONFIG_DIR}/canvas.env"
 install -o root -g root -m 0440 \
   "${INSTALL_DIR}/packaging/openhands-symphony-validator.sudoers" \

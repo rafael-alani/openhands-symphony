@@ -36,6 +36,8 @@ The exact accepted issue comments are:
 
 No suffix or embedded command is accepted. The webhook author association must be OWNER, MEMBER, or COLLABORATOR.
 
+Trusted command comments are keyed by their immutable GitHub comment ID. The webhook and scheduled reconciler share that durable idempotency record, so a command posted while the VM is offline is replayed once after restart without duplicating later deliveries.
+
 ## Branches and PRs
 
 Branches are `agent/<issue>-<short-slug>`. PRs always begin as drafts and include:

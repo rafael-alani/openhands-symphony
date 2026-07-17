@@ -59,7 +59,8 @@ class OpenHandsACPProvider(ProviderAdapter):
                 autonomous_available=True,
                 limitation=(
                     "Uses Symphony's small ACP bridge over the official agy --print interface. "
-                    "OpenHands conversations resume, but agy print mode does not expose a stable native conversation ID."
+                    "Reloaded turns use agy's workspace-scoped --continue; the bridge does not expose a stable native "
+                    "conversation ID for exact cross-workspace selection."
                 ),
             )
         return ProviderCapabilities(True, True, True, True, True, True)

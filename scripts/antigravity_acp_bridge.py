@@ -47,6 +47,7 @@ class AntigravityBridge:
         self.sessions: dict[str, Path] = {}
         self.session_modes: dict[str, str] = {}
         self.processes: dict[str, asyncio.subprocess.Process] = {}
+        self.continue_sessions: set[str] = set()
 
     @staticmethod
     def _mode_state(current: str = "default") -> schema.SessionModeState:
@@ -87,11 +88,13 @@ class AntigravityBridge:
 
     async def load_session(self, cwd: str, session_id: str, **kwargs: Any) -> schema.LoadSessionResponse:
         self.sessions[session_id] = Path(cwd).resolve()
+        self.continue_sessions.add(session_id)
         mode = self.session_modes.setdefault(session_id, "default")
         return schema.LoadSessionResponse(modes=self._mode_state(mode))
 
     async def resume_session(self, session_id: str, cwd: str, **kwargs: Any) -> schema.ResumeSessionResponse:
         self.sessions[session_id] = Path(cwd).resolve()
+        self.continue_sessions.add(session_id)
         mode = self.session_modes.setdefault(session_id, "default")
         return schema.ResumeSessionResponse(modes=self._mode_state(mode))
 
@@ -123,7 +126,7 @@ class AntigravityBridge:
             "LOCAL_BACKEND_API_KEY",
         ):
             environment.pop(name, None)
-        process = await asyncio.create_subprocess_exec(
+        command = [
             binary,
             "--sandbox",
             "--mode",
@@ -132,6 +135,11 @@ class AntigravityBridge:
             print_timeout,
             "--print",
             prompt_text,
+        ]
+        if session_id in self.continue_sessions:
+            command.insert(1, "--continue")
+        process = await asyncio.create_subprocess_exec(
+            *command,
             cwd=cwd,
             env=environment,
             stdout=asyncio.subprocess.PIPE,
@@ -144,6 +152,8 @@ class AntigravityBridge:
         finally:
             self.processes.pop(session_id, None)
         output = redact(output_bytes.decode(errors="replace"))
+        if process.returncode == 0:
+            self.continue_sessions.add(session_id)
         if process.returncode:
             kind = failure_kind(output)
             payload = {
@@ -175,6 +185,7 @@ class AntigravityBridge:
         await self.cancel(session_id)
         self.sessions.pop(session_id, None)
         self.session_modes.pop(session_id, None)
+        self.continue_sessions.discard(session_id)
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         return {}

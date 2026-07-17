@@ -50,7 +50,9 @@ The event path handles exact issues with low latency. The scheduler also searche
 
 The default concurrency key is `owner/repository`. A transactional `leases` row is unique by key; `BEGIN IMMEDIATE` makes two workers unable to claim it together. A repository may set a stable monorepo project key. Global and per-provider limits apply in addition.
 
-Jobs are ordered by explicit retry first, then the repository least recently given a claim, then oldest update. A held repository key causes the query to select eligible work from another repository. This round-robin bias prevents a large backlog in one repository from monopolizing a global slot. Provider backoff rows suppress auth/quota/tool retry loops.
+Jobs are ordered by explicit retry first, then the repository least recently given a claim, then oldest update. A held repository key causes the query to select eligible work from another repository. This round-robin bias prevents a large backlog in one repository from monopolizing a global slot. Provider backoff rows suppress auth/quota/tool retry loops and receive bounded additive jitter so recovered providers are not hit in lockstep.
+
+The worker renews its lease for the complete claimed lifecycle: checkout, setup, provider execution, validation, GitHub mutation, independent review, and repair. It also renews synchronously immediately before a push, PR creation/update, or review mutation. Canonical status-comment synchronization uses a separate expiring SQLite operation lock, preventing the webhook service and timer process from racing to create duplicate comments.
 
 ## Trust boundaries
 

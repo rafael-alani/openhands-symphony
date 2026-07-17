@@ -10,10 +10,9 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request
 
 from .coordinator import Coordinator, IntakeError
+from .intake import TRUSTED_ASSOCIATIONS
 from .scheduler import Scheduler
 from .store import Store
-
-TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 
 def _issue_identity(payload: dict[str, Any]) -> tuple[str | None, int | None]:
@@ -94,9 +93,17 @@ def create_app(
             command = parse_control_command(str(comment.get("body") or ""))
             association = str(comment.get("author_association") or "").upper()
             if command and association in TRUSTED_ASSOCIATIONS:
-                job = coordinator.control(repository, issue_number, command)
+                comment_id = comment.get("id")
+                if comment_id is None:
+                    return {"accepted": True, "ignored": "command comment omitted an id"}
+                job, applied = coordinator.apply_control_comment(repository, issue_number, int(comment_id), command)
                 scheduler.tick()
-                return {"accepted": True, "command": command, "job_id": job.id if job else None}
+                return {
+                    "accepted": True,
+                    "command": command,
+                    "duplicate_command": not applied,
+                    "job_id": job.id if job else None,
+                }
             if command:
                 return {"accepted": True, "ignored": "untrusted command author"}
         return {"accepted": True, "ignored": "event/action is not routed"}

@@ -36,4 +36,4 @@ On any Canvas, Agent Server, ACP wrapper, Claude, or Codex version change:
 5. verify Antigravity `--print`/sandbox flags if its version changed;
 6. only then update `versions.env`.
 
-The same date's Antigravity interface spike downloaded the official 1.1.3 macOS arm64 artifact, verified Google's manifest SHA-512, and observed `--print`, `--conversation`, `--print-timeout`, `--sandbox`, and `--mode`. It did not consume a model turn. Linux amd64/arm64 URLs and hashes are pinned separately in `versions.env`.
+The same date's Antigravity interface spike downloaded the official 1.1.3 macOS arm64 artifact, verified Google's manifest SHA-512, and observed `--print`, `--continue`, `--conversation`, `--print-timeout`, `--sandbox`, and `--mode`. It did not consume a model turn. The bridge uses workspace-scoped `--continue` for subsequent/reloaded ACP turns. Linux amd64/arm64 URLs and hashes are pinned separately in `versions.env`.

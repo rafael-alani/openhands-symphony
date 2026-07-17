@@ -14,6 +14,10 @@ A unique repository/issue row coalesces webhooks, polls, and restarts. Attempts 
 
 Expired leases are not blindly requeued. Reconciliation first cancels the exact durable OpenHands implementation, reviewer, or repair conversation. A failed cancellation stops for guidance; a successfully interrupted review can be explicitly or automatically retried against the existing PR without recreating it.
 
+Lease heartbeats cover every claimed phase rather than only model execution, because repository setup and validation can outlast a lease on their own. External code mutations also require a synchronous successful renewal. Cross-process status updates take an expiring SQLite operation lock so exact-item intake and scheduled reconciliation cannot both create the canonical comment.
+
+Monorepo parallelism is explicit rather than inferred from paths or issue prose. A repository may map operator-created labels such as `project:frontend` to allowlisted scope keys; exactly one mapped label is required, and each resulting key remains namespaced to that repository.
+
 ## Repository default concurrency key
 
 One implementation per repository is safe and understandable for a solo developer. A configured stable key supports monorepo project scopes. Review holds or safely releases the same write lease; it never permits two implementation writers.
@@ -44,9 +48,13 @@ A review is never considered clean when the process omits its structured recomme
 
 Repository setup and validation use a third `openhands-validator` identity with an empty environment and neither credential home. The orchestrator's sudo authorization can move down to this lower-authority account; its only root command is the exact read-only nftables table probe used by `agentctl doctor`. Agent-facing Git metadata is read-only; privileged Git operations verify it and use an explicit validated GitHub remote.
 
+The Canvas API key is root-owned and readable only by the orchestrator service group. Systemd reads it into Canvas before dropping privileges, while the `openhands-agent` account is deliberately excluded from that group; model-facing wrappers additionally delete the environment variable.
+
 ## Comment reviews from one bot identity
 
 GitHub forbids a PR author from approving or requesting changes on its own PR. The wrapper therefore posts the independent result as a real COMMENT review, records the reviewer's recommendation separately, and uses substantive findings—not the GitHub event type—to drive bounded repairs.
+
+After every repair validation and every newly observed CI state, the orchestrator replaces only the generated PR body's Validation section. This keeps command outcomes and current CI evidence attached to the PR without overwriting the implementation summary or risks.
 
 ## Browser is a tool, not a second model
 

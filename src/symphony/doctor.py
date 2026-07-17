@@ -109,15 +109,28 @@ def _service_accounts() -> Check:
         and (validator.pw_name in members or validator.pw_gid == shared.gr_gid)
     )
     operator_members = set(operators.gr_mem)
-    operators_ok = (orchestrator.pw_name in operator_members or orchestrator.pw_gid == operators.gr_gid) and (
-        worker.pw_name in operator_members or worker.pw_gid == operators.gr_gid
-    )
+    operators_ok = orchestrator.pw_name in operator_members or orchestrator.pw_gid == operators.gr_gid
+    worker_excluded = worker.pw_name not in operator_members and worker.pw_gid != operators.gr_gid
     validator_excluded = validator.pw_name not in operator_members and validator.pw_gid != operators.gr_gid
     return Check(
         "service account isolation",
-        separate and shared_ok and operators_ok and validator_excluded,
+        separate and shared_ok and operators_ok and worker_excluded and validator_excluded,
         f"orchestrator uid={orchestrator.pw_uid}, worker uid={worker.pw_uid}, "
         f"validator uid={validator.pw_uid}, shared_group={shared.gr_gid}, operators_group={operators.gr_gid}",
+    )
+
+
+def _canvas_key_permissions(config: Config) -> Check:
+    try:
+        info = config.service.agent_server_api_key_file.stat()
+        group = grp.getgrgid(info.st_gid).gr_name
+        mode = stat.S_IMODE(info.st_mode)
+    except (OSError, KeyError) as exc:
+        return Check("Canvas key file boundary", False, str(exc))
+    return Check(
+        "Canvas key file boundary",
+        info.st_uid == 0 and group == "openhands-symphony" and mode == 0o640,
+        f"path={config.service.agent_server_api_key_file}, owner_uid={info.st_uid}, group={group}, mode={oct(mode)}",
     )
 
 
@@ -230,6 +243,7 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
             config.service.agent_server_api_key_file.is_file(),
             str(config.service.agent_server_api_key_file),
         ),
+        _canvas_key_permissions(config),
         _service_accounts(),
         _validator_boundary(config),
         Check(
@@ -256,6 +270,7 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
         _command_check("git", "git"),
         _command_check("GitHub CLI", "gh"),
         _command_check("Browser Use", "/opt/browser-use/bin/browser-use"),
+        _command_check("Browser Harness", "/opt/browser-use/bin/browser-harness"),
         _command_check("Antigravity CLI", "agy"),
         _command_check("Claude ACP wrapper", "/opt/openhands-symphony/scripts/claude_acp_wrapper.sh"),
         _command_check("Codex ACP wrapper", "/opt/openhands-symphony/scripts/codex_acp_wrapper.sh"),

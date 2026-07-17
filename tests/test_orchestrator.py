@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -153,6 +154,142 @@ def test_reviewer_repair_loop_is_bounded_and_preserves_pr(tmp_path):
     assert len(reviewer.starts) == 2
     assert len(github.reviews) == 2
     assert github.pr_creates == 1
+    assert len(github.pr_body_updates) == 2
+    assert github.pr_body_updates[-1].count("**PASS**") == 2
+    assert "CI at last observation" in github.pr_body_updates[-1]
+
+
+def test_review_routing_change_is_stopped_before_agent_start(tmp_path):
+    snapshot = issue(labels=("agent:ready", "agent:codex", "review:required", "review:claude"))
+    config = make_config(tmp_path, review=True)
+    store = Store(config.service.state_dir / "state.db")
+    github = FakeGitHub([snapshot])
+    implementer = FakeProvider("codex", write_files={"implemented.txt": "ok\n"})
+    reviewer = FakeProvider("claude", result_data={"review_event": "approve", "substantive_findings": 0})
+    coordinator = Coordinator(config, store, github, {"codex": implementer, "claude": reviewer})
+    coordinator.enqueue(snapshot)
+    claimed = _claim(store, config)
+    github.set_issue(replace(snapshot, labels=("agent:ready", "agent:codex")))
+
+    result = coordinator.run_claimed(claimed)
+
+    assert result.state == JobState.NEEDS_GUIDANCE
+    assert result.phase == "routing-changed"
+    assert implementer.starts == []
+
+
+def test_claimed_job_with_disabled_provider_stops_for_guidance(tmp_path):
+    snapshot = issue()
+    config = make_config(tmp_path)
+    store = Store(config.service.state_dir / "state.db")
+    github = FakeGitHub([snapshot])
+    original = Coordinator(config, store, github, {"codex": FakeProvider("codex")})
+    original.enqueue(snapshot)
+    claimed = _claim(store, config)
+
+    restarted = Coordinator(config, store, github, {})
+    result = restarted.run_claimed(claimed)
+
+    assert result.state == JobState.NEEDS_GUIDANCE
+    assert result.phase == "provider-configuration-changed"
+
+
+def test_worker_prompt_uses_the_installed_browser_harness_interface(tmp_path):
+    from symphony.prompting import implementation_prompt
+
+    snapshot = issue()
+    config = make_config(tmp_path)
+    store = Store(config.service.state_dir / "state.db")
+    github = FakeGitHub([snapshot])
+    coordinator = Coordinator(config, store, github, {"codex": FakeProvider("codex")})
+    job, _ = coordinator.enqueue(snapshot)
+
+    prompt = implementation_prompt(job)
+
+    assert "browser-harness <<'PY'" in prompt
+    assert "browser-use <<'PY'" not in prompt
+
+
+def test_lease_heartbeat_covers_non_provider_work(tmp_path):
+    snapshot = issue()
+    config = make_config(tmp_path)
+    config = replace(
+        config,
+        scheduler=replace(config.scheduler, lease_seconds=1, heartbeat_seconds=0.1),
+    )
+    store = Store(config.service.state_dir / "state.db")
+    github = FakeGitHub([snapshot])
+    coordinator = Coordinator(config, store, github, {"codex": FakeProvider("codex")})
+    coordinator.enqueue(snapshot)
+    claimed = store.claim_next("test-worker", 1, 3, config.scheduler.provider_concurrency)
+    assert claimed
+
+    stop, thread = coordinator._start_heartbeat(claimed)
+    try:
+        time.sleep(1.2)
+        assert store.expired_lease_jobs() == []
+    finally:
+        coordinator._stop_heartbeat(stop, thread)
+
+
+def test_allowlisted_monorepo_scopes_can_run_independently(tmp_path):
+    frontend = issue(number=1, labels=("agent:ready", "agent:codex", "project:frontend"))
+    backend = issue(number=2, labels=("agent:ready", "agent:codex", "project:backend"))
+    config = make_config(tmp_path)
+    repository_config = replace(
+        config.repositories[frontend.repository],
+        concurrency_scope="label",
+        concurrency_labels={"project:frontend": "frontend", "project:backend": "backend"},
+    )
+    config = replace(config, repositories={frontend.repository: repository_config})
+    store = Store(config.service.state_dir / "state.db")
+    github = FakeGitHub([frontend, backend])
+    coordinator = Coordinator(config, store, github, {"codex": FakeProvider("codex")})
+
+    first, _ = coordinator.enqueue(frontend)
+    second, _ = coordinator.enqueue(backend)
+    claimed_first = store.claim_next("worker-a", 30, 3, config.scheduler.provider_concurrency)
+    claimed_second = store.claim_next("worker-b", 30, 3, config.scheduler.provider_concurrency)
+
+    assert claimed_first and claimed_second
+    assert {claimed_first.id, claimed_second.id} == {first.id, second.id}
+    assert claimed_first.concurrency_key != claimed_second.concurrency_key
+
+
+def test_label_scoped_monorepo_requires_exactly_one_allowlisted_scope(tmp_path):
+    snapshot = issue()
+    config = make_config(tmp_path)
+    repository_config = replace(
+        config.repositories[snapshot.repository],
+        concurrency_scope="label",
+        concurrency_labels={"project:frontend": "frontend", "project:backend": "backend"},
+    )
+    config = replace(config, repositories={snapshot.repository: repository_config})
+    store = Store(config.service.state_dir / "state.db")
+    github = FakeGitHub([snapshot])
+    coordinator = Coordinator(config, store, github, {"codex": FakeProvider("codex")})
+
+    with pytest.raises(IntakeError, match="exactly one configured concurrency-scope label"):
+        coordinator.enqueue(snapshot)
+
+
+def test_reconciliation_recovers_missed_control_comment_once(tmp_path):
+    snapshot = issue()
+    config = make_config(tmp_path)
+    store = Store(config.service.state_dir / "state.db")
+    github = FakeGitHub([snapshot])
+    github.control_commands[snapshot.repository] = [(snapshot.number, 9001, "pause")]
+    coordinator = Coordinator(config, store, github, {"codex": FakeProvider("codex")})
+    coordinator.enqueue(snapshot)
+
+    first = coordinator.reconcile()
+    second = coordinator.reconcile()
+
+    job = store.get_job(snapshot.repository, snapshot.number)
+    assert job and job.state == JobState.NEEDS_GUIDANCE
+    assert (snapshot.repository, snapshot.number, "recovered command: pause") in first
+    assert (snapshot.repository, snapshot.number, "recovered command: pause") not in second
+    assert sum(event["kind"] == "control" for event in store.events(job.id)) == 1
 
 
 def test_unstructured_reviewer_result_is_not_treated_as_clean(tmp_path):

@@ -106,3 +106,14 @@ def test_sequential_claims_rotate_repositories_before_draining_one_backlog(tmp_p
 
     claimed = store.claim_next("worker", 60, 1, {"codex": 1})
     assert claimed and claimed.id == second.id
+
+
+def test_operation_lock_is_durable_and_exclusive(tmp_path):
+    path = tmp_path / "state.db"
+    first = Store(path)
+    second = Store(path)
+
+    assert first.acquire_operation_lock("status:job", "worker-a", 60)
+    assert not second.acquire_operation_lock("status:job", "worker-b", 60)
+    first.release_operation_lock("status:job", "worker-a")
+    assert second.acquire_operation_lock("status:job", "worker-b", 60)

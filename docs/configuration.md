@@ -43,8 +43,9 @@ The supported adapter name is `openhands-acp`. Claude and Codex point at sanitiz
 
 ## `[repositories."owner/repo"]`
 
-- `concurrency_scope`: `repository` by default; use `configured` with an explicit key for a named project scope.
-- `concurrency_key`: blank means repository; set a stable project scope for a monorepo.
+- `concurrency_scope`: `repository` by default; `configured` uses one explicit fixed key; `label` selects an allowlisted monorepo project.
+- `concurrency_key`: required only for a fixed `configured` scope.
+- `concurrency_labels`: in `label` mode, a map such as `{ "project:frontend" = "frontend" }`; exactly one mapped label is required and the resulting key is namespaced to the repository.
 - `validation_commands`: argv arrays for all required format/lint/type/test/build gates.
 - `setup_script`: relative optional script, default `.openhands/setup.sh`.
 - `instruction`: optional repository-specific suffix; empty by default.

@@ -139,3 +139,37 @@ def test_antigravity_bridge_classifies_nonzero_quota_failure(tmp_path, monkeypat
     asyncio.run(exercise())
     assert '"failure_kind":"quota"' in connection.message.content.text
     assert '"exit_code":9' in connection.message.content.text
+
+
+def test_antigravity_bridge_uses_native_continue_for_subsequent_turn(tmp_path, monkeypatch):
+    module = load_bridge_module()
+    calls: list[tuple[object, ...]] = []
+
+    class Process:
+        returncode = 0
+        pid = 789
+
+        async def communicate(self):
+            return b"ok", None
+
+    async def create_process(*args, **kwargs):
+        calls.append(args)
+        return Process()
+
+    class Connection:
+        async def session_update(self, session_id, message):
+            return None
+
+    monkeypatch.setattr(module.asyncio, "create_subprocess_exec", create_process)
+    bridge = module.AntigravityBridge()
+    bridge.on_connect(Connection())
+
+    async def exercise():
+        session = await bridge.new_session(str(tmp_path))
+        await bridge.prompt(session.session_id, [SimpleNamespace(text="first")])
+        await bridge.prompt(session.session_id, [SimpleNamespace(text="second")])
+
+    asyncio.run(exercise())
+
+    assert "--continue" not in calls[0]
+    assert calls[1][1] == "--continue"

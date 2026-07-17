@@ -6,11 +6,11 @@ The direct interface was locally spiked on 2026-07-16: the pinned CLI connected 
 
 ## Recommended mode
 
-The selected coding agent invokes the local `browser-use` CLI. Browser Use supplies browser control, while Claude, Codex, or Antigravity remains the reasoning model. This local direct-browser mode does not require `BROWSER_USE_API_KEY`. Browser Use Cloud/hosted agents do require separate credentials and are not configured.
+The selected coding agent invokes the local `browser-harness` CLI installed alongside Browser Use. Browser Harness supplies direct CDP control, while Claude, Codex, or Antigravity remains the reasoning model. This local direct-browser mode does not require `BROWSER_USE_API_KEY`. Browser Use Cloud/hosted agents do require separate credentials and are not configured.
 
 | Integration | Claude | Codex | Antigravity | Extra model API key |
 |---|---|---|---|---|
-| Local `browser-use` CLI | Supported | Supported | Supported through the headless bridge | No |
+| Local `browser-harness` direct CDP CLI | Supported | Supported | Supported through the headless bridge | No |
 | Browser Use local MCP server | Not configured | Not configured | Not configured | **Yes, for the MCP server's reasoning model** |
 | Browser Use Cloud/hosted agent | Disabled | Disabled | Disabled | Yes |
 
@@ -19,14 +19,14 @@ CLI-first is the default because all three workers already have shell tool acces
 The exact local pattern exposed to workers is:
 
 ```bash
-browser-use <<'PY'
+browser-harness <<'PY'
 new_tab("https://example.com")
 wait_for_load()
 print(page_info())
 PY
 ```
 
-Helpers are pre-imported by Browser Harness. `browser-use auth`, `start_remote_daemon`, cloud/profile sync, and remote browser IDs are outside the supported baseline.
+Helpers are pre-imported by Browser Harness. Browser Use cloud authentication, `start_remote_daemon`, cloud/profile sync, and remote browser IDs are outside the supported baseline. The separately installed `browser-use` CLI remains available for diagnostics and explicit opt-in use, but Symphony does not give its autonomous/cloud-agent modes any API key.
 
 Browser Use's current local MCP documentation requires an `OPENAI_API_KEY` (or another supported model API key), so enabling that server would silently defeat the subscription-only design. Agent Canvas/OpenHands remains MCP-capable for standard OpenHands agents, but the pinned OpenHands ACP Agent contract delegates tools to the provider and explicitly does not accept `mcp_config`. Symphony therefore ships no MCP registration: GitHub mutations are more safely handled by the wrapper and `gh`, while browser control stays inside the selected subscription-authenticated coding agent. An operator may opt into a provider-side MCP server separately after accepting its credential and billing model; Symphony never injects such keys.
 

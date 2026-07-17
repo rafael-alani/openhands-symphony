@@ -67,6 +67,7 @@ class ProviderConfig:
 class RepositoryConfig:
     concurrency_scope: str = "repository"
     concurrency_key: str = ""
+    concurrency_labels: dict[str, str] = field(default_factory=dict)
     validation_commands: tuple[tuple[str, ...], ...] = ()
     setup_script: str = ".openhands/setup.sh"
     instruction: str = ""
@@ -84,10 +85,15 @@ class Config:
     def repository(self, name: str) -> RepositoryConfig:
         return self.repositories.get(name, RepositoryConfig())
 
-    def concurrency_key(self, repository: str) -> str:
+    def concurrency_key(self, repository: str, labels: tuple[str, ...] = ()) -> str:
         cfg = self.repository(repository)
-        if cfg.concurrency_key:
+        if cfg.concurrency_scope == "configured":
             return cfg.concurrency_key
+        if cfg.concurrency_scope == "label":
+            selected = [key for label, key in cfg.concurrency_labels.items() if label in labels]
+            if len(selected) != 1:
+                raise ValueError("exactly one configured concurrency-scope label is required")
+            return f"{repository}:{selected[0]}"
         return repository
 
 
@@ -170,10 +176,17 @@ def _validate_config(config: Config) -> None:
     if unknown:
         raise ValueError(f"repository configuration is not allowlisted: {sorted(unknown)}")
     for name, repository in config.repositories.items():
-        if repository.concurrency_scope not in {"repository", "configured"}:
-            raise ValueError(f"repositories.{name}.concurrency_scope must be 'repository' or 'configured'")
+        if repository.concurrency_scope not in {"repository", "configured", "label"}:
+            raise ValueError(f"repositories.{name}.concurrency_scope must be 'repository', 'configured', or 'label'")
         if repository.concurrency_scope == "configured" and not repository.concurrency_key:
             raise ValueError(f"repositories.{name}.concurrency_key is required for configured scope")
+        if repository.concurrency_scope == "label" and not repository.concurrency_labels:
+            raise ValueError(f"repositories.{name}.concurrency_labels is required for label scope")
+        for label, key in repository.concurrency_labels.items():
+            if not label or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", label):
+                raise ValueError(f"repositories.{name}.concurrency_labels contains an invalid label: {label!r}")
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", key):
+                raise ValueError(f"repositories.{name}.concurrency_labels contains an invalid key: {key!r}")
         setup = Path(repository.setup_script)
         if setup.is_absolute() or ".." in setup.parts:
             raise ValueError(f"repositories.{name}.setup_script must be a confined relative path")
@@ -252,6 +265,7 @@ def load_config(path: str | Path | None = None) -> Config:
         repositories[name] = RepositoryConfig(
             concurrency_scope=str(value.get("concurrency_scope", "repository")),
             concurrency_key=str(value.get("concurrency_key", "")),
+            concurrency_labels={str(label): str(key) for label, key in value.get("concurrency_labels", {}).items()},
             validation_commands=_validation_commands(value.get("validation_commands")),
             setup_script=str(value.get("setup_script", ".openhands/setup.sh")),
             instruction=str(value.get("instruction", "")),

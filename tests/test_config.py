@@ -46,3 +46,21 @@ def test_config_rejects_unsafe_validation_account(tmp_path):
     path.write_text(path.read_text().replace('listen_host = "127.0.0.1"', 'validation_user = "bad;user"'))
     with pytest.raises(ValueError, match="safe local account"):
         load_config(path)
+
+
+def test_config_loads_allowlisted_label_concurrency_scopes(tmp_path):
+    path = _config(tmp_path / "config.toml")
+    path.write_text(
+        path.read_text().replace(
+            'setup_script = ".openhands/setup.sh"',
+            'concurrency_scope = "label"\n'
+            'concurrency_labels = { "project:frontend" = "frontend", "project:backend" = "backend" }\n'
+            'setup_script = ".openhands/setup.sh"',
+        )
+    )
+
+    config = load_config(path)
+
+    assert config.concurrency_key("solo/project", ("project:frontend",)) == "solo/project:frontend"
+    with pytest.raises(ValueError, match="exactly one"):
+        config.concurrency_key("solo/project", ())

@@ -11,7 +11,7 @@ from typing import Any
 
 from .models import ACTIVE_STATES, IssueSnapshot, Job, JobState, ValidationResult, utcnow
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 ALLOWED_TRANSITIONS: dict[JobState, set[JobState]] = {
     JobState.QUEUED: {
@@ -174,17 +174,34 @@ class Store:
                         key TEXT PRIMARY KEY,
                         value TEXT NOT NULL
                     );
+
+                    CREATE TABLE operation_locks (
+                        name TEXT PRIMARY KEY,
+                        owner TEXT NOT NULL,
+                        expires_at TEXT NOT NULL
+                    );
                     """
                 )
                 connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-            elif version == 1:
-                columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)").fetchall()}
-                if "pause_requested" not in columns:
-                    connection.execute("ALTER TABLE jobs ADD COLUMN pause_requested INTEGER NOT NULL DEFAULT 0")
-                if "review_conversation_id" not in columns:
-                    connection.execute("ALTER TABLE jobs ADD COLUMN review_conversation_id TEXT")
-                if "review_session_id" not in columns:
-                    connection.execute("ALTER TABLE jobs ADD COLUMN review_session_id TEXT")
+            else:
+                if version == 1:
+                    columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)").fetchall()}
+                    if "pause_requested" not in columns:
+                        connection.execute("ALTER TABLE jobs ADD COLUMN pause_requested INTEGER NOT NULL DEFAULT 0")
+                    if "review_conversation_id" not in columns:
+                        connection.execute("ALTER TABLE jobs ADD COLUMN review_conversation_id TEXT")
+                    if "review_session_id" not in columns:
+                        connection.execute("ALTER TABLE jobs ADD COLUMN review_session_id TEXT")
+                if version < 3:
+                    connection.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS operation_locks (
+                            name TEXT PRIMARY KEY,
+                            owner TEXT NOT NULL,
+                            expires_at TEXT NOT NULL
+                        )
+                        """
+                    )
                 connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @staticmethod
@@ -289,6 +306,13 @@ class Store:
                 (delivery_id, event_name, repository, issue_number, utcnow(), payload_hash),
             )
             return cursor.rowcount == 1
+
+    def delivery_recorded(self, delivery_id: str) -> bool:
+        with self.connect() as connection:
+            return (
+                connection.execute("SELECT 1 FROM deliveries WHERE delivery_id=?", (delivery_id,)).fetchone()
+                is not None
+            )
 
     def update_snapshot_if_unclaimed(
         self,
@@ -555,6 +579,7 @@ class Store:
             "review_required",
             "review_conversation_id",
             "review_session_id",
+            "concurrency_key",
         }
         invalid = set(values) - allowed
         if invalid:
@@ -698,6 +723,23 @@ class Store:
                 """,
                 (provider, reason, until, now_dt.isoformat()),
             )
+
+    def acquire_operation_lock(self, name: str, owner: str, seconds: int = 900) -> bool:
+        """Acquire a short durable mutex for idempotent external artifact mutation."""
+        now_dt = datetime.now(UTC)
+        now = now_dt.isoformat()
+        expires = (now_dt + timedelta(seconds=seconds)).isoformat()
+        with self.transaction() as connection:
+            connection.execute("DELETE FROM operation_locks WHERE expires_at<=?", (now,))
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO operation_locks(name, owner, expires_at) VALUES (?, ?, ?)",
+                (name, owner, expires),
+            )
+            return cursor.rowcount == 1
+
+    def release_operation_lock(self, name: str, owner: str) -> None:
+        with self.transaction() as connection:
+            connection.execute("DELETE FROM operation_locks WHERE name=? AND owner=?", (name, owner))
 
     def backup(self, target: str | Path) -> None:
         target_path = Path(target)

@@ -2,6 +2,14 @@
 
 These are the upstream interfaces checked on 2026-07-16. Version-specific behavior is additionally captured by the local spike; documentation alone is not treated as proof of the pinned stack.
 
+## Platform
+
+- [Ubuntu 26.04 LTS images](https://releases.ubuntu.com/26.04/): Canonical publishes Ubuntu 26.04 LTS (Resolute Raccoon) server images.
+- [Playwright release notes](https://playwright.dev/docs/release-notes): Playwright 1.61 adds Ubuntu 26.04 support and bundles Chromium 149.0.7827.55, matching the repository pins.
+- [Playwright browser installation](https://playwright.dev/docs/browsers): `playwright install --with-deps chromium` installs both its version-matched browser and the host-specific system dependencies.
+- [Ubuntu `python3-venv` packages](https://packages.ubuntu.com/search?keywords=python3-venv&searchon=names&section=all): the unversioned package follows each Ubuntu release's default Python, avoiding a Noble-only `python3.12-venv` dependency.
+- [uv Python storage](https://docs.astral.sh/uv/reference/storage/): `UV_PYTHON_INSTALL_DIR` places a managed Python outside root's private home so installed service environments remain executable by their unprivileged accounts.
+
 ## OpenHands
 
 - [ACP Agent](https://docs.openhands.dev/sdk/guides/agent-acp): OpenHands can delegate a conversation to an ACP server. The ACP server owns its tools and authentication; `mcp_config` is not supported on `ACPAgent`, so any provider-side MCP server must be configured by that provider.

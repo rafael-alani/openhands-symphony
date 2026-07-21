@@ -2,7 +2,7 @@
 
 ## VM
 
-Use an Ubuntu 24.04 LTS Proxmox VM, not an LXC. Enable the QEMU guest agent, use VirtIO SCSI/network, and place workspaces on SSD-backed storage. For one agent, start with 6 vCPU, 16 GB RAM, and 80 GB disk; see the README for higher concurrency and Chromium tiers.
+Use an Ubuntu 26.04 LTS Proxmox VM, not an LXC. Ubuntu 24.04 LTS remains supported as a fallback. Enable the QEMU guest agent, use VirtIO SCSI/network, and place workspaces on SSD-backed storage. For one agent, start with 6 vCPU, 16 GB RAM, and 80 GB disk; see the README for higher concurrency and Chromium tiers.
 
 ## Clean install
 
@@ -17,7 +17,7 @@ sudoedit /etc/openhands-symphony/config.toml
 
 The source repository is private. Configure a read-only deploy key or your GitHub SSH key on the VM before the clone; do not place that key in this repository or in the orchestrator configuration.
 
-The idempotent installer rejects non-Ubuntu-24.04 hosts, installs `gh` through GitHub's apt repository, verifies the official Node tarball, pins Canvas/Agent Server/ACP/provider/Browser Use/Browser Harness/Playwright versions, installs a pinned headless Chromium plus system dependencies, pins Antigravity with Google-published SHA-512 hashes, disables Antigravity auto-update, creates separate orchestrator/agent/validator identities, installs a one-way lower-authority validation sudo rule plus one exact read-only nftables doctor probe, a narrow nftables non-exposure rule, and systemd units, and generates secrets without printing them. Existing configuration, credentials, state, and reports are preserved.
+The idempotent installer accepts Ubuntu 26.04 or 24.04 LTS and rejects other hosts. It installs `gh` through GitHub's apt repository, verifies the official Node tarball, and installs a service-readable uv-managed Python 3.12 under `/opt/uv-python` for Symphony, Browser Use, and the Antigravity ACP bridge instead of relying on a distribution-specific Python package name. It pins Canvas/Agent Server/ACP/provider/Browser Use/Browser Harness/Playwright versions, lets the pinned Playwright release install the correct Chromium system dependencies for the selected Ubuntu release, installs pinned headless Chromium, pins Antigravity with Google-published SHA-512 hashes, disables Antigravity auto-update, creates separate orchestrator/agent/validator identities, installs a one-way lower-authority validation sudo rule plus one exact read-only nftables doctor probe, a narrow nftables non-exposure rule, and systemd units, and generates secrets without printing them. Existing configuration, credentials, state, and reports are preserved.
 
 Pins and accepted ranges are in `versions.env`. `agentctl doctor` checks the installed versions and Agent Server response.
 

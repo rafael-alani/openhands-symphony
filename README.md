@@ -20,7 +20,7 @@ Use `/agent pause`, `/agent resume`, `/agent retry`, or `/agent cancel` in an is
 
 ## Clean install
 
-The supported target is an unprivileged service on an Ubuntu 24.04 LTS Proxmox **VM** (not LXC). From a fresh VM:
+The preferred target is an unprivileged service on an Ubuntu 26.04 LTS Proxmox **VM** (not LXC). Ubuntu 24.04 LTS remains supported as a fallback. From a fresh VM:
 
 ```bash
 sudo apt-get update

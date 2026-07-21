@@ -27,10 +27,9 @@ if [[ ! -r /etc/os-release ]]; then
   exit 1
 fi
 . /etc/os-release
-if [[ ${ID:-} != "ubuntu" || ${VERSION_ID:-} != "24.04" ]]; then
-  echo "Unsupported distribution: Ubuntu 24.04 LTS is required; found ${PRETTY_NAME:-unknown}" >&2
-  exit 1
-fi
+# shellcheck source=scripts/install_platform.sh
+. "${SOURCE_DIR}/scripts/install_platform.sh"
+symphony_require_supported_platform "${ID:-}" "${VERSION_ID:-}" "${PRETTY_NAME:-unknown}"
 
 # shellcheck source=versions.env
 . "${SOURCE_DIR}/versions.env"
@@ -45,10 +44,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git gnupg jq nftables openssl rsync sqlite3 xz-utils build-essential \
   sudo \
-  python3.12 python3.12-venv libsecret-1-0 dbus-user-session dbus-x11 gnome-keyring \
-  libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-  libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-  libgbm1 libasound2t64 libpango-1.0-0 libcairo2 fonts-liberation
+  python3 python3-venv libsecret-1-0 dbus-user-session dbus-x11 gnome-keyring
 
 install -d -m 0755 /etc/apt/keyrings
 if [[ ! -f /etc/apt/keyrings/githubcli-archive-keyring.gpg ]]; then
@@ -86,6 +82,11 @@ done
 if ! command -v uv >/dev/null || [[ "$(uv --version)" != "uv ${UV_VERSION}" ]]; then
   curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | env UV_INSTALL_DIR=/usr/local/bin sh
 fi
+export UV_PYTHON_INSTALL_DIR=/opt/uv-python
+export UV_MANAGED_PYTHON=true
+install -d -m 0755 "${UV_PYTHON_INSTALL_DIR}"
+uv python install "${PYTHON_VERSION}"
+chmod -R a+rX "${UV_PYTHON_INSTALL_DIR}"
 
 if ! getent group "${SHARED_GROUP}" >/dev/null; then
   groupadd --system "${SHARED_GROUP}"
@@ -145,16 +146,16 @@ npm install --prefix /opt/provider-clis --omit=dev --no-audit --no-fund \
   "@openai/codex@${CODEX_VERSION}"
 
 env UV_TOOL_DIR=/opt/openhands-symphony-tool/tools UV_TOOL_BIN_DIR=/opt/openhands-symphony-tool/bin \
-  uv tool install --force --locked --python python3.12 "${INSTALL_DIR}"
+  uv tool install --force --locked --python "${PYTHON_VERSION}" "${INSTALL_DIR}"
 env UV_TOOL_DIR=/opt/browser-use/tools UV_TOOL_BIN_DIR=/opt/browser-use/bin \
-  uv tool install --force --python python3.12 \
+  uv tool install --force --python "${PYTHON_VERSION}" \
   --with "browser-harness==${BROWSER_HARNESS_VERSION}" "browser-use==${BROWSER_USE_VERSION}"
 
 env PLAYWRIGHT_BROWSERS_PATH=/opt/browser-use/chromium \
   uvx --from "playwright==${PLAYWRIGHT_VERSION}" playwright install chromium --with-deps --no-shell
 chmod -R a+rX /opt/browser-use/chromium
 
-uv venv --clear --python python3.12 /opt/antigravity-acp
+uv venv --clear --python "${PYTHON_VERSION}" /opt/antigravity-acp
 uv pip install --python /opt/antigravity-acp/bin/python "agent-client-protocol==${ACP_PYTHON_VERSION}"
 
 case "${ARCH}" in

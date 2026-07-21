@@ -35,6 +35,7 @@ sudo -iu openhands-agent agentctl auth codex
 Codex uses device authentication on headless Linux. Claude uses its official Pro/Max login. Each provider command finishes with its official status probe and records only a non-secret timestamp marker. Antigravity is disabled by default; authenticate it only after explicitly enabling it and verifying the official binary against the VM CPU in a disposable smoke test. The private D-Bus/Secret Service pair supplies its required Linux keyring when enabled.
 
 Antigravity is installed and can be authenticated, but it remains `enabled = false` in the example configuration because no subscription-backed Ubuntu autonomous run has passed yet. After a successful disposable smoke run, enable it explicitly; no fallback provider is used when it is disabled.
+Its executable is named `agy`, not `antigravity`. The optional `sudo -iu openhands-agent agentctl auth antigravity` command forces Antigravity's remote SSH OAuth mode after `sudo` strips the caller's SSH variables. Open the URL it prints in a local browser, complete sign-in, and paste only the resulting alphanumeric authorization code into the terminal—not the browser URL.
 
 ## Labels, start, and verify
 

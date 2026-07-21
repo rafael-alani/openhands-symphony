@@ -48,6 +48,7 @@ sudo -iu openhands-symphony agentctl status
 ```
 
 Antigravity is disabled by default. Do not authenticate or probe it unless you explicitly enable it after verifying that the VM CPU exposes the instruction-set features required by its official binary.
+Its official executable is `agy`, not `antigravity`. For an optional worker-account login, `agentctl auth antigravity` forces the remote SSH URL/code flow even though `sudo -iu` removes the original SSH environment: open the printed URL locally, then paste only the alphanumeric code displayed by the browser back into the terminal.
 
 The example deliberately leaves repository validation empty. Once the first architecture issue establishes the real toolchain, its agent must add a non-interactive `.openhands/quality-gate.sh` containing the repository's actual checks. Symphony executes that credential-free gate and will not push a draft PR without passing evidence. Operators may instead pin immutable `validation_commands` in the service configuration at any time.
 

@@ -18,6 +18,20 @@ def _run_interactive(command: list[str], *, environment: dict[str, str] | None =
     return subprocess.run(command, check=False, env=environment).returncode
 
 
+def _authentication_environment(provider: str) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
+    if provider != "github":
+        environment.setdefault("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/openhands-agent/bus")
+    if provider == "github":
+        environment.setdefault("GH_CONFIG_DIR", "/var/lib/openhands-symphony/github")
+    if provider == "antigravity":
+        # sudo -iu normally removes the caller's SSH_* variables. Antigravity
+        # uses remote-session detection to select its manual URL/code OAuth loop.
+        environment.setdefault("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 0")
+    return environment
+
+
 def _antigravity_cpu_error(*, machine: str | None = None, cpuinfo: str | None = None) -> str | None:
     machine = (machine or platform.machine()).lower()
     if machine not in {"amd64", "x86_64"}:
@@ -48,15 +62,15 @@ def _authenticate_provider(provider: str) -> int:
         "antigravity": ["agy", "models"],
         "github": ["gh", "auth", "status", "--hostname", "github.com"],
     }
-    environment = os.environ.copy()
-    environment["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
+    environment = _authentication_environment(provider)
     if provider == "antigravity" and (cpu_error := _antigravity_cpu_error()):
         print(cpu_error, file=sys.stderr)
         return 2
-    if provider != "github":
-        environment.setdefault("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/openhands-agent/bus")
-    if provider == "github":
-        environment.setdefault("GH_CONFIG_DIR", "/var/lib/openhands-symphony/github")
+    if provider == "antigravity":
+        print(
+            "Antigravity SSH login: open the printed authorization URL in your local browser, then paste only "
+            "the alphanumeric authorization code shown by the browser into this terminal. Do not paste a URL."
+        )
     status = _run_interactive(login_commands[provider], environment=environment)
     if status:
         return status

@@ -150,7 +150,8 @@ env UV_PROJECT_ENVIRONMENT=/opt/openhands-symphony-tool \
   uv sync --locked --no-dev --no-editable --project "${INSTALL_DIR}"
 env UV_TOOL_DIR=/opt/browser-use/tools UV_TOOL_BIN_DIR=/opt/browser-use/bin \
   uv tool install --force --python "${PYTHON_VERSION}" \
-  --with "browser-harness==${BROWSER_HARNESS_VERSION}" "browser-use==${BROWSER_USE_VERSION}"
+  --with-executables-from "browser-harness==${BROWSER_HARNESS_VERSION}" \
+  "browser-use==${BROWSER_USE_VERSION}"
 
 env PLAYWRIGHT_BROWSERS_PATH=/opt/browser-use/chromium \
   uvx --from "playwright==${PLAYWRIGHT_VERSION}" playwright install chromium --with-deps --no-shell
@@ -233,7 +234,7 @@ fi
 echo
 echo "Installation complete. Configuration and existing credentials were preserved."
 echo "Codex CLI: /usr/local/bin/codex"
-echo "If this shell was open before installation, run 'rehash' (zsh) or 'hash -r' (bash)."
+echo "If your shell cached a missing command, start a new shell before testing the installed CLIs."
 echo "1. Edit ${CONFIG_DIR}/config.toml and replace CHANGE_ME/CHANGE_ME."
 echo "2. Start the private worker keyring, then run these interactive commands exactly:"
 echo "   sudo systemctl start openhands-agent-keyring.service"

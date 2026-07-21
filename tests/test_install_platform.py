@@ -62,6 +62,7 @@ def test_installer_uses_release_neutral_python_and_playwright_dependencies() -> 
     assert "uv tool install --force --locked" not in installer
     assert "UV_PROJECT_ENVIRONMENT=/opt/openhands-symphony-tool" in installer
     assert 'uv sync --locked --no-dev --no-editable --project "${INSTALL_DIR}"' in installer
+    assert '--with-executables-from "browser-harness==${BROWSER_HARNESS_VERSION}"' in installer
     assert "playwright install chromium --with-deps --no-shell" in installer
     assert "libatk1.0-0 " not in installer
     assert "libcups2 " not in installer

@@ -42,7 +42,6 @@ Authenticate the provider users, start the stack, and require a clean doctor:
 sudo systemctl start openhands-agent-keyring.service
 sudo -iu openhands-agent agentctl auth claude
 sudo -iu openhands-agent agentctl auth codex
-sudo -iu openhands-agent agentctl auth antigravity
 sudo agentctl start
 sudo -iu openhands-symphony agentctl doctor
 ```

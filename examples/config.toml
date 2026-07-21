@@ -13,6 +13,7 @@ global_agent_instruction = ""
 validation_user = "openhands-validator"
 
 [github]
+# Replace both occurrences below with the same GitHub owner/repository value.
 allowed_repositories = ["CHANGE_ME/CHANGE_ME"]
 private_only = true
 auth_mode = "gh"
@@ -66,7 +67,7 @@ auth_marker_file = "/var/lib/openhands-auth-status/antigravity.json"
 timeout_seconds = 7200
 manual_command = ["agy"]
 
-[repositories."CHANGE_ME/CHANGE_ME"]
+[repositories."CHANGE_ME/CHANGE_ME"] # Must match github.allowed_repositories exactly.
 concurrency_scope = "repository"
 # For one fixed custom lock, use concurrency_scope="configured" and set this key.
 concurrency_key = ""

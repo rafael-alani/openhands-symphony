@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from symphony.config import load_config
+from symphony.runtime import build_coordinator
 
 EXAMPLE_CONFIG = Path(__file__).resolve().parents[1] / "examples" / "config.toml"
 
@@ -74,3 +75,8 @@ def test_example_config_bootstraps_repository_owned_validation() -> None:
 
     assert repository.validation_commands == ()
     assert repository.setup_script == ""
+
+
+def test_operational_config_rejects_example_repository_placeholder() -> None:
+    with pytest.raises(ValueError, match="replace CHANGE_ME/CHANGE_ME"):
+        build_coordinator(EXAMPLE_CONFIG)

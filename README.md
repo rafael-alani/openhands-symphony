@@ -41,12 +41,13 @@ sudo systemctl start openhands-agent-keyring.service
 sudo -iu openhands-symphony agentctl auth github
 sudo -iu openhands-agent agentctl auth claude
 sudo -iu openhands-agent agentctl auth codex
-sudo -iu openhands-agent agentctl auth antigravity
 sudo -iu openhands-symphony agentctl labels
 sudo agentctl start
 sudo -iu openhands-symphony agentctl doctor
 sudo -iu openhands-symphony agentctl status
 ```
+
+Antigravity is disabled by default. Do not authenticate or probe it unless you explicitly enable it after verifying that the VM CPU exposes the instruction-set features required by its official binary.
 
 The example deliberately leaves repository validation empty. Once the first architecture issue establishes the real toolchain, its agent must add a non-interactive `.openhands/quality-gate.sh` containing the repository's actual checks. Symphony executes that credential-free gate and will not push a draft PR without passing evidence. Operators may instead pin immutable `validation_commands` in the service configuration at any time.
 

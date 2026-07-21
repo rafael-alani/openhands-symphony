@@ -3,17 +3,36 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .config import load_config
 from .doctor import run_doctor
-from .runtime import build_coordinator
+from .runtime import build_coordinator, validate_operational_config
 
 
 def _run_interactive(command: list[str], *, environment: dict[str, str] | None = None) -> int:
     return subprocess.run(command, check=False, env=environment).returncode
+
+
+def _antigravity_cpu_error(*, machine: str | None = None, cpuinfo: str | None = None) -> str | None:
+    machine = (machine or platform.machine()).lower()
+    if machine not in {"amd64", "x86_64"}:
+        return None
+    if cpuinfo is None:
+        try:
+            cpuinfo = Path("/proc/cpuinfo").read_text()
+        except OSError:
+            return None
+    if "pclmulqdq" in cpuinfo.lower().split():
+        return None
+    return (
+        "Antigravity CLI cannot run because this x86_64 VM does not expose PCLMULQDQ. "
+        "Keep providers.antigravity.enabled=false or update the VM CPU model before authenticating it."
+    )
 
 
 def _authenticate_provider(provider: str) -> int:
@@ -31,6 +50,9 @@ def _authenticate_provider(provider: str) -> int:
     }
     environment = os.environ.copy()
     environment["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
+    if provider == "antigravity" and (cpu_error := _antigravity_cpu_error()):
+        print(cpu_error, file=sys.stderr)
+        return 2
     if provider != "github":
         environment.setdefault("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/openhands-agent/bus")
     if provider == "github":
@@ -91,7 +113,14 @@ def main() -> None:
 
     if args.command == "auth":
         raise SystemExit(_authenticate_provider(args.provider))
-    if args.command in {"start", "stop", "restart"}:
+    if args.command == "stop":
+        raise SystemExit(_systemctl(args.command))
+    if args.command in {"start", "restart"}:
+        try:
+            validate_operational_config(load_config(args.config))
+        except Exception as exc:
+            print(f"configuration error: {exc}", file=sys.stderr)
+            raise SystemExit(2) from None
         raise SystemExit(_systemctl(args.command))
     if args.command == "logs":
         raise SystemExit(_run_interactive(["journalctl", "-u", "openhands-symphony.service", "-f", "-n", "100"]))

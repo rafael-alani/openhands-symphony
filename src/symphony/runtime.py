@@ -10,6 +10,15 @@ from .providers.openhands import OpenHandsACPProvider
 from .store import Store
 
 
+def validate_operational_config(config: Config) -> None:
+    placeholders = [repository for repository in config.github.allowed_repositories if "CHANGE_ME" in repository]
+    if placeholders:
+        raise ValueError(
+            "replace CHANGE_ME/CHANGE_ME in both github.allowed_repositories and the matching "
+            '[repositories."owner/repository"] section of /etc/openhands-symphony/config.toml'
+        )
+
+
 def build_providers(config: Config) -> dict[str, ProviderAdapter]:
     providers: dict[str, ProviderAdapter] = {}
     for name, provider_config in config.providers.items():
@@ -30,6 +39,7 @@ def build_providers(config: Config) -> dict[str, ProviderAdapter]:
 
 def build_coordinator(config_path: str | Path | None = None) -> tuple[Config, Store, Coordinator]:
     config = load_config(config_path)
+    validate_operational_config(config)
     config.service.state_dir.mkdir(parents=True, exist_ok=True)
     store = Store(config.service.state_dir / "state.db")
     github = GhCLIBackend(

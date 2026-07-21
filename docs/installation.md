@@ -30,10 +30,9 @@ sudo systemctl start openhands-agent-keyring.service
 sudo -iu openhands-symphony agentctl auth github
 sudo -iu openhands-agent agentctl auth claude
 sudo -iu openhands-agent agentctl auth codex
-sudo -iu openhands-agent agentctl auth antigravity
 ```
 
-Codex uses device authentication on headless Linux. Claude uses its official Pro/Max login. Antigravity detects SSH and prints a Google authorization URL/code flow. The private D-Bus/Secret Service pair supplies the Linux keyring required by the official Antigravity CLI. Each provider command finishes with its official status/model probe and records only a non-secret timestamp marker.
+Codex uses device authentication on headless Linux. Claude uses its official Pro/Max login. Each provider command finishes with its official status probe and records only a non-secret timestamp marker. Antigravity is disabled by default; authenticate it only after explicitly enabling it and verifying the official binary against the VM CPU in a disposable smoke test. The private D-Bus/Secret Service pair supplies its required Linux keyring when enabled.
 
 Antigravity is installed and can be authenticated, but it remains `enabled = false` in the example configuration because no subscription-backed Ubuntu autonomous run has passed yet. After a successful disposable smoke run, enable it explicitly; no fallback provider is used when it is disabled.
 

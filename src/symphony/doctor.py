@@ -172,6 +172,18 @@ def _workspace_permissions(config: Config) -> Check:
     )
 
 
+def _credential_exposure(path: Path) -> tuple[bool, str]:
+    try:
+        path.stat()
+    except FileNotFoundError:
+        return False, f"{path} is absent"
+    except PermissionError:
+        return False, f"{path} is not visible to the orchestrator (expected account isolation)"
+    except OSError as exc:
+        return True, f"could not verify {path}: {exc}"
+    return True, f"{path} is visible to the orchestrator"
+
+
 def _agent_server(config: Config, expected: str) -> Check:
     headers: dict[str, str] = {}
     try:
@@ -220,6 +232,24 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
         "GOOGLE_API_KEY",
         "BROWSER_USE_API_KEY",
     )
+    antigravity_enabled = bool(config.providers.get("antigravity") and config.providers["antigravity"].enabled)
+    if antigravity_enabled:
+        antigravity_command = _command_check("Antigravity CLI", "agy")
+        antigravity_bridge = _command_check("Antigravity ACP bridge", "/opt/antigravity-acp/bin/python")
+        antigravity_version = _exact_version(
+            "Antigravity version", ["agy", "--version"], versions.get("ANTIGRAVITY_VERSION", "1.1.3")
+        )
+    else:
+        antigravity_command = Check(
+            "Antigravity CLI", True, "optional provider disabled; executable probe skipped", required=False
+        )
+        antigravity_bridge = Check(
+            "Antigravity ACP bridge", True, "optional provider disabled; bridge probe skipped", required=False
+        )
+        antigravity_version = Check(
+            "Antigravity version", True, "optional provider disabled; version probe skipped", required=False
+        )
+    worker_gh_exposed, worker_gh_detail = _credential_exposure(Path("/var/lib/openhands-agent/.config/gh/hosts.yml"))
     checks = [
         Check(
             "config allowlist",
@@ -271,10 +301,10 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
         _command_check("GitHub CLI", "gh"),
         _command_check("Browser Use", "/opt/browser-use/bin/browser-use"),
         _command_check("Browser Harness", "/opt/browser-use/bin/browser-harness"),
-        _command_check("Antigravity CLI", "agy"),
+        antigravity_command,
         _command_check("Claude ACP wrapper", "/opt/openhands-symphony/scripts/claude_acp_wrapper.sh"),
         _command_check("Codex ACP wrapper", "/opt/openhands-symphony/scripts/codex_acp_wrapper.sh"),
-        _command_check("Antigravity ACP bridge", "/opt/antigravity-acp/bin/python"),
+        antigravity_bridge,
         _github_version(versions),
         _exact_version("Node.js version", ["node", "--version"], versions.get("NODE_VERSION", "22.23.1")),
         _exact_version("uv version", ["uv", "--version"], versions.get("UV_VERSION", "0.11.29")),
@@ -311,11 +341,7 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
             ],
             versions.get("CODEX_ACP_VERSION", "1.1.4"),
         ),
-        _exact_version(
-            "Antigravity version",
-            ["agy", "--version"],
-            versions.get("ANTIGRAVITY_VERSION", "1.1.3"),
-        ),
+        antigravity_version,
         _exact_version(
             "Browser Use version",
             [
@@ -379,10 +405,9 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
             "GitHub auth must live only in /var/lib/openhands-symphony/github",
         ),
         Check(
-            "worker GitHub credential absent",
-            not Path("/var/lib/openhands-agent/.config/gh/hosts.yml").exists()
-            and "GH_CONFIG_DIR=" not in canvas_environment,
-            "the model worker must not inherit the orchestrator GitHub login",
+            "worker GitHub credential isolation",
+            not worker_gh_exposed and "GH_CONFIG_DIR=" not in canvas_environment,
+            f"{worker_gh_detail}; the model worker must not inherit the orchestrator GitHub login",
         ),
     ]
     try:

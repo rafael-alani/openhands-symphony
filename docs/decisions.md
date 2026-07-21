@@ -28,7 +28,7 @@ Agents edit only worktrees. The wrapper performs comments, labels, commits, push
 
 ## Proof is mandatory
 
-No validation configuration means no PR. The wrapper reruns administrator-defined gates, records exact commands/exit/output, and permits only a bounded correction. Provider prose is never treated as test evidence.
+No passing validation evidence means no PR. Operators may pin commands in service configuration; otherwise the first suitable architecture issue proposes a repository-owned `.openhands/quality-gate.sh` based on the actual toolchain. The credential-free wrapper runs that gate before pushing even the bootstrap draft PR, records exact commands/exit/output, and permits only a bounded correction. Provider prose is never treated as test evidence, and a human still decides whether to merge the proposed bootstrap gate.
 
 ## Subscription-first providers
 

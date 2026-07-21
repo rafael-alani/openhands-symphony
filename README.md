@@ -48,6 +48,8 @@ sudo -iu openhands-symphony agentctl doctor
 sudo -iu openhands-symphony agentctl status
 ```
 
+The example deliberately leaves repository validation empty. Once the first architecture issue establishes the real toolchain, its agent must add a non-interactive `.openhands/quality-gate.sh` containing the repository's actual checks. Symphony executes that credential-free gate and will not push a draft PR without passing evidence. Operators may instead pin immutable `validation_commands` in the service configuration at any time.
+
 Open Canvas through SSH:
 
 ```bash

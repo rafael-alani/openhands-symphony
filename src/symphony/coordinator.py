@@ -552,17 +552,19 @@ class Coordinator:
         return f"{local}; CI: {cls._ci_summary(context)}"
 
     @staticmethod
-    def _validation_failure_prompt(results: list[object]) -> str:
+    def _validation_failure_prompt(results: list[object], validation_summary: str) -> str:
         sections = []
         for result in results:
             if not getattr(result, "ok", False):
                 command = " ".join(result.command)
                 output = result.output[-6000:]
                 sections.append(f"Command: {command}\nObserved output:\n{output}")
+        if not sections:
+            sections.append(f"Wrapper validation could not start:\n{validation_summary}")
         return (
-            "The wrapper reran the required quality gates and they failed. Correct only these observed failures, "
-            "rerun relevant checks, and leave the workspace ready. Do not push or use GitHub.\n\n"
-            + "\n\n".join(sections)
+            "The wrapper could not obtain passing validation evidence. Correct only the observed problem, create a "
+            "truthful `.openhands/quality-gate.sh` if the repository has no configured gate, rerun relevant checks, "
+            "and leave the workspace ready. Do not push or use GitHub.\n\n" + "\n\n".join(sections)
         )
 
     def _transition_from_provider_result(self, job: Job, result) -> Job | None:
@@ -806,6 +808,10 @@ class Coordinator:
                 job,
                 self.config.service.global_agent_instruction,
                 self.config.repository(job.repository).instruction,
+                quality_gate_required=(
+                    not self.config.repository(job.repository).validation_commands
+                    and not (worktree / ".openhands" / "quality-gate.sh").is_file()
+                ),
             )
             with self._provider_slot(job, provider):
                 if job.conversation_id and provider.capabilities.supports_resume:
@@ -855,7 +861,7 @@ class Coordinator:
                 corrections += 1
                 self.store.record_event(job.id, "validation-correction", {"pass": corrections})
                 with self._provider_slot(job, provider):
-                    provider.resume(run, self._validation_failure_prompt(results))
+                    provider.resume(run, self._validation_failure_prompt(results, validation_summary))
                     result = self._wait(job, provider, run)
                 stopped = self._transition_from_provider_result(job, result)
                 if stopped:

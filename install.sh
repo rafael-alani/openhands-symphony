@@ -145,8 +145,9 @@ npm install --prefix /opt/provider-clis --omit=dev --no-audit --no-fund \
   "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
   "@openai/codex@${CODEX_VERSION}"
 
-env UV_TOOL_DIR=/opt/openhands-symphony-tool/tools UV_TOOL_BIN_DIR=/opt/openhands-symphony-tool/bin \
-  uv tool install --force --locked --python "${PYTHON_VERSION}" "${INSTALL_DIR}"
+uv venv --clear --python "${PYTHON_VERSION}" /opt/openhands-symphony-tool
+env UV_PROJECT_ENVIRONMENT=/opt/openhands-symphony-tool \
+  uv sync --locked --no-dev --no-editable --project "${INSTALL_DIR}"
 env UV_TOOL_DIR=/opt/browser-use/tools UV_TOOL_BIN_DIR=/opt/browser-use/bin \
   uv tool install --force --python "${PYTHON_VERSION}" \
   --with "browser-harness==${BROWSER_HARNESS_VERSION}" "browser-use==${BROWSER_USE_VERSION}"
@@ -188,6 +189,13 @@ if [[ -x "${AGY_PATH}" ]]; then
   ln -sfn "${AGY_PATH}" /usr/local/bin/agy
 fi
 
+for installed_command in agentctl openhands-symphony claude codex browser-use browser-harness agy; do
+  if [[ ! -x "/usr/local/bin/${installed_command}" ]]; then
+    echo "Installation failed: /usr/local/bin/${installed_command} is missing or not executable" >&2
+    exit 1
+  fi
+done
+
 if [[ ! -f "${CONFIG_DIR}/config.toml" ]]; then
   install -o root -g "${SERVICE_USER}" -m 0640 "${INSTALL_DIR}/examples/config.toml" "${CONFIG_DIR}/config.toml"
 fi
@@ -224,6 +232,8 @@ fi
 
 echo
 echo "Installation complete. Configuration and existing credentials were preserved."
+echo "Codex CLI: /usr/local/bin/codex"
+echo "If this shell was open before installation, run 'rehash' (zsh) or 'hash -r' (bash)."
 echo "1. Edit ${CONFIG_DIR}/config.toml and replace CHANGE_ME/CHANGE_ME."
 echo "2. Start the private worker keyring, then run these interactive commands exactly:"
 echo "   sudo systemctl start openhands-agent-keyring.service"

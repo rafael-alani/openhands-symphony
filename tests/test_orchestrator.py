@@ -45,6 +45,42 @@ def test_success_opens_one_draft_pr_with_validation_evidence(tmp_path):
     assert github.comment_creates == 1
 
 
+def test_first_architecture_issue_can_bootstrap_repository_quality_gate(tmp_path):
+    snapshot = issue(title="Establish architecture and quality checks")
+    config = make_config(tmp_path)
+    config = replace(
+        config,
+        repositories={snapshot.repository: replace(config.repositories[snapshot.repository], validation_commands=())},
+    )
+    store = Store(config.service.state_dir / "state.db")
+    github = FakeGitHub([snapshot])
+    provider = FakeProvider(
+        "codex",
+        write_files={
+            "implemented.txt": "ok\n",
+            ".openhands/quality-gate.sh": '#!/bin/sh\nset -eu\ntest "$(cat implemented.txt)" = ok\n',
+        },
+    )
+    coordinator = Coordinator(config, store, github, {"codex": provider})
+    job, _ = coordinator.enqueue(snapshot)
+    coordinator.workspaces = ExistingWorkspace(create_worktree(tmp_path, job.branch))
+
+    result = coordinator.run_claimed(_claim(store, config))
+
+    assert result.state == JobState.PR_OPEN
+    assert "no `.openhands/quality-gate.sh` yet" in provider.starts[0][1]
+    assert store.validations(job.id)[0]["command_json"] == '["bash", ".openhands/quality-gate.sh"]'
+
+
+def test_missing_bootstrap_gate_produces_a_focused_correction_prompt() -> None:
+    summary = "No validation commands or .openhands/quality-gate.sh are configured; proof is required before push."
+
+    prompt = Coordinator._validation_failure_prompt([], summary)
+
+    assert summary in prompt
+    assert "create a truthful `.openhands/quality-gate.sh`" in prompt
+
+
 def test_independent_fresh_reviewer_posts_real_review_and_leaves_pr_open(tmp_path):
     snapshot = issue(labels=("agent:ready", "agent:codex", "review:required", "review:claude"))
     config = make_config(tmp_path, review=True)

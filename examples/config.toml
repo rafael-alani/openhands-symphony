@@ -74,15 +74,10 @@ concurrency_key = ""
 # and map operator-created labels to stable scope keys. Exactly one mapped label
 # must be present on every routed issue in that mode.
 concurrency_labels = { "project:frontend" = "frontend", "project:backend" = "backend" }
-# Array-of-arrays: no shell is involved. Include every required formatter,
-# linter, type checker, test, and build, or provide .openhands/quality-gate.sh.
-validation_commands = [
-  ["npm", "run", "format:check"],
-  ["npm", "run", "lint"],
-  ["npm", "run", "typecheck"],
-  ["npm", "test", "--", "--runInBand"],
-  ["npm", "run", "build"],
-]
-setup_script = ".openhands/setup.sh"
+# Leave these empty while the repository architecture is being established.
+# The first suitable issue must add a truthful .openhands/quality-gate.sh;
+# Symphony runs that gate before it can push a draft PR.
+validation_commands = []
+setup_script = ""
 instruction = ""
 approval_policy = "safe-code-only"

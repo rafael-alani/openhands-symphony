@@ -46,12 +46,12 @@ The supported adapter name is `openhands-acp`. Claude and Codex point at sanitiz
 - `concurrency_scope`: `repository` by default; `configured` uses one explicit fixed key; `label` selects an allowlisted monorepo project.
 - `concurrency_key`: required only for a fixed `configured` scope.
 - `concurrency_labels`: in `label` mode, a map such as `{ "project:frontend" = "frontend" }`; exactly one mapped label is required and the resulting key is namespaced to the repository.
-- `validation_commands`: argv arrays for all required format/lint/type/test/build gates.
-- `setup_script`: relative optional script, default `.openhands/setup.sh`.
+- `validation_commands`: optional operator-pinned argv arrays for all required format/lint/type/test/build gates.
+- `setup_script`: optional repository-relative setup script; empty by default while architecture is being established.
 - `instruction`: optional repository-specific suffix; empty by default.
 - `approval_policy`: currently `safe-code-only`.
 
-If `validation_commands` is empty, `.openhands/quality-gate.sh` is used when present. Otherwise PR creation is blocked because no proof exists.
+The shipped example leaves both fields empty. When no operator-pinned commands or repository gate exist, the implementation prompt tells the first suitable architecture issue to add a truthful, non-interactive `.openhands/quality-gate.sh` based on the actual project. The wrapper executes that proposed gate before pushing the bootstrap draft PR. If the agent cannot determine meaningful checks, it must request guidance; if it omits the gate, bounded correction runs and PR creation remains blocked. Once merged, the repository-owned gate becomes the default for subsequent issues. Operators can use `validation_commands` when they need immutable out-of-repository policy.
 
 Setup and validation commands execute with a clean environment as `validation_user`, not as the GitHub-owning orchestrator or subscription-owning worker. They retain network access for normal dependency/test workflows but cannot read either credential home.
 

@@ -6,6 +6,8 @@ import pytest
 
 from symphony.config import load_config
 
+EXAMPLE_CONFIG = Path(__file__).resolve().parents[1] / "examples" / "config.toml"
+
 
 def _config(path: Path, *, host: str = "127.0.0.1", setup_script: str = ".openhands/setup.sh") -> Path:
     path.write_text(
@@ -64,3 +66,11 @@ def test_config_loads_allowlisted_label_concurrency_scopes(tmp_path):
     assert config.concurrency_key("solo/project", ("project:frontend",)) == "solo/project:frontend"
     with pytest.raises(ValueError, match="exactly one"):
         config.concurrency_key("solo/project", ())
+
+
+def test_example_config_bootstraps_repository_owned_validation() -> None:
+    config = load_config(EXAMPLE_CONFIG)
+    repository = config.repository("CHANGE_ME/CHANGE_ME")
+
+    assert repository.validation_commands == ()
+    assert repository.setup_script == ""

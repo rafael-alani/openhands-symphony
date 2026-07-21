@@ -59,6 +59,11 @@ def test_installer_uses_release_neutral_python_and_playwright_dependencies() -> 
     assert "UV_MANAGED_PYTHON=true" in installer
     assert 'uv python install "${PYTHON_VERSION}"' in installer
     assert installer.count('--python "${PYTHON_VERSION}"') == 3
+    assert "uv tool install --force --locked" not in installer
+    assert "UV_PROJECT_ENVIRONMENT=/opt/openhands-symphony-tool" in installer
+    assert 'uv sync --locked --no-dev --no-editable --project "${INSTALL_DIR}"' in installer
     assert "playwright install chromium --with-deps --no-shell" in installer
     assert "libatk1.0-0 " not in installer
     assert "libcups2 " not in installer
+    assert 'if [[ ! -x "/usr/local/bin/${installed_command}" ]]' in installer
+    assert "Codex CLI: /usr/local/bin/codex" in installer

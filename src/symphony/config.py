@@ -69,7 +69,7 @@ class RepositoryConfig:
     concurrency_key: str = ""
     concurrency_labels: dict[str, str] = field(default_factory=dict)
     validation_commands: tuple[tuple[str, ...], ...] = ()
-    setup_script: str = ".openhands/setup.sh"
+    setup_script: str = ""
     instruction: str = ""
     approval_policy: str = "safe-code-only"
 
@@ -267,7 +267,7 @@ def load_config(path: str | Path | None = None) -> Config:
             concurrency_key=str(value.get("concurrency_key", "")),
             concurrency_labels={str(label): str(key) for label, key in value.get("concurrency_labels", {}).items()},
             validation_commands=_validation_commands(value.get("validation_commands")),
-            setup_script=str(value.get("setup_script", ".openhands/setup.sh")),
+            setup_script=str(value.get("setup_script", "")),
             instruction=str(value.get("instruction", "")),
             approval_policy=str(value.get("approval_policy", "safe-code-only")),
         )

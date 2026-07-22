@@ -32,6 +32,8 @@ Browser Use's current local MCP documentation requires an `OPENAI_API_KEY` (or a
 
 `BROWSER_HARNESS_HOME=/var/lib/openhands-agent/browser` and `BH_AGENT_WORKSPACE=/var/lib/openhands-agent/browser/agent-workspace` keep profiles, downloads, screenshots, daemon sockets, and helper state outside repositories with mode 0700. `BROWSER_USE_HOME` is also set for compatibility. Do not copy browser state into reports or commits. Persistent profiles are VM secrets.
 
+The browser service also points `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, and `XDG_DATA_HOME` below that writable private directory. Chrome for Testing requires a writable XDG configuration location to initialize its local Crashpad database even when reporting is disabled; leaving the defaults under the otherwise read-only service home causes an immediate `SIGTRAP`. The launcher passes `--disable-breakpad` and does not upload crash reports.
+
 Browser Harness telemetry and Browser Use cloud sync are disabled in the worker environment. The pinned CLI may still perform a daily best-effort PyPI version check, but it cannot self-update the root-owned installation; upgrades remain an explicit `versions.env`/`agentctl update` operation.
 
 Headless Chromium requires RAM and shared-memory headroom. URL/tool policy is not an egress firewall: enforce hard domain restrictions with VM DNS, proxy, or firewall rules. Keep downloads below the private browser state or the assigned worktree, and never report cookies, local storage, or credential exports.

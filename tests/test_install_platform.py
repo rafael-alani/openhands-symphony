@@ -8,6 +8,8 @@ import pytest
 PLATFORM_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install_platform.sh"
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
 CHROMIUM_APPARMOR = Path(__file__).resolve().parents[1] / "packaging" / "openhands-symphony-chromium.apparmor"
+BROWSER_UNIT = Path(__file__).resolve().parents[1] / "systemd" / "openhands-browser.service"
+BROWSER_LAUNCHER = Path(__file__).resolve().parents[1] / "scripts" / "launch_headless_browser.sh"
 
 
 def _check_platform(distribution_id: str, version: str, pretty_name: str) -> subprocess.CompletedProcess[str]:
@@ -83,3 +85,17 @@ def test_chromium_apparmor_profile_narrowly_allows_the_pinned_browser_tree() -> 
     assert "/opt/browser-use/chromium/**/chrome" in profile
     assert "userns," in profile
     assert "/**" not in profile.replace("/opt/browser-use/chromium/**/chrome", "")
+
+
+def test_browser_crashpad_state_stays_in_the_writable_private_browser_home() -> None:
+    installer = INSTALLER.read_text()
+    unit = BROWSER_UNIT.read_text()
+    launcher = BROWSER_LAUNCHER.read_text()
+
+    for name in ("xdg-config", "xdg-cache", "xdg-data"):
+        path = f"/var/lib/openhands-agent/browser/{name}"
+        assert path in unit
+        assert path in launcher
+        assert f'"${{AGENT_STATE_DIR}}/browser/{name}"' in installer
+    assert "ReadWritePaths=/var/lib/openhands-agent/browser" in unit
+    assert "--disable-breakpad" in launcher

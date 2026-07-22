@@ -120,7 +120,9 @@ install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 0700 \
 install -d -o "${SERVICE_USER}" -g "${SHARED_GROUP}" -m 2770 "${STATE_DIR}/workspaces"
 install -d -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0700 \
   "${AGENT_STATE_DIR}" "${AGENT_STATE_DIR}/browser" \
-  "${AGENT_STATE_DIR}/browser/chromium-profile" "${AGENT_STATE_DIR}/browser/agent-workspace"
+  "${AGENT_STATE_DIR}/browser/chromium-profile" "${AGENT_STATE_DIR}/browser/agent-workspace" \
+  "${AGENT_STATE_DIR}/browser/xdg-config" "${AGENT_STATE_DIR}/browser/xdg-cache" \
+  "${AGENT_STATE_DIR}/browser/xdg-data"
 install -d -o "${VALIDATOR_USER}" -g "${VALIDATOR_USER}" -m 0700 "${VALIDATOR_STATE_DIR}"
 install -d -o "${AGENT_USER}" -g "${AUTH_GROUP}" -m 2750 "${AUTH_STATUS_DIR}"
 install -d -o root -g "${SERVICE_USER}" -m 0751 "${CONFIG_DIR}"

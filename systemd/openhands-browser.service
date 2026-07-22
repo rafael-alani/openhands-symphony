@@ -12,6 +12,9 @@ Group=openhands-agent
 Environment=HOME=/var/lib/openhands-agent
 Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/browser-use/chromium
 Environment=SYMPHONY_BROWSER_PROFILE=/var/lib/openhands-agent/browser/chromium-profile
+Environment=XDG_CONFIG_HOME=/var/lib/openhands-agent/browser/xdg-config
+Environment=XDG_CACHE_HOME=/var/lib/openhands-agent/browser/xdg-cache
+Environment=XDG_DATA_HOME=/var/lib/openhands-agent/browser/xdg-data
 ExecStart=/opt/openhands-symphony/scripts/launch_headless_browser.sh
 Restart=on-failure
 RestartSec=5

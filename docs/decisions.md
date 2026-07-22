@@ -32,7 +32,7 @@ No passing validation evidence means no PR. Operators may pin commands in servic
 
 ## Subscription-first providers
 
-Claude and Codex are wired to reuse worker-owned subscription login through ACP. Antigravity 1.1.3 documents `agy --print`; a minimal custom ACP bridge invokes that official headless mode. There is no screen scraping, API-key fallback, or provider substitution. Native Antigravity conversation resume is not claimed because print mode exposes no stable machine-readable conversation ID. Antigravity is disabled in the example until a subscription-backed Ubuntu smoke run proves the full path.
+Claude and Codex are wired to reuse worker-owned subscription login through ACP. Antigravity 1.1.5 documents `agy --print`; a minimal custom ACP bridge invokes that official headless mode. There is no screen scraping, API-key fallback, or provider substitution. Native Antigravity conversation resume is not claimed because print mode exposes no stable machine-readable conversation ID. Antigravity is disabled in the example until a subscription-backed Ubuntu smoke run proves the full path.
 
 ## Unattended does not mean full access
 

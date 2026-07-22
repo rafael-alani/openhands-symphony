@@ -29,6 +29,8 @@ def _authentication_environment(provider: str) -> dict[str, str]:
         # sudo -iu normally removes the caller's SSH_* variables. Antigravity
         # uses remote-session detection to select its manual URL/code OAuth loop.
         environment.setdefault("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 0")
+        environment.setdefault("SSH_CLIENT", "127.0.0.1 0 0")
+        environment.setdefault("SSH_TTY", "/dev/tty")
     return environment
 
 

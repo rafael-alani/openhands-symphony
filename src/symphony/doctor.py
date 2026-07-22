@@ -237,7 +237,7 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
         antigravity_command = _command_check("Antigravity CLI", "agy")
         antigravity_bridge = _command_check("Antigravity ACP bridge", "/opt/antigravity-acp/bin/python")
         antigravity_version = _exact_version(
-            "Antigravity version", ["agy", "--version"], versions.get("ANTIGRAVITY_VERSION", "1.1.3")
+            "Antigravity version", ["agy", "--version"], versions.get("ANTIGRAVITY_VERSION", "1.1.5")
         )
     else:
         antigravity_command = Check(

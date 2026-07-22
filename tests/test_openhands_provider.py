@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from symphony.models import ProviderOutcome, ProviderRun
 from symphony.providers.openhands import OpenHandsACPProvider
 
 
@@ -47,3 +48,30 @@ def test_start_selects_unattended_non_bypass_mode(
     assert settings["acp_session_mode"] == expected_mode
     assert settings["acp_session_mode"] not in {"bypassPermissions", "agent-full-access"}
     assert settings["acp_prompt_timeout"] == 600.0
+
+
+def test_agent_server_response_envelope_yields_structured_summary() -> None:
+    run = ProviderRun("codex", "conversation-id", "session-id")
+    payload = {
+        "response": (
+            "Progress update that must not become the PR summary.\n"
+            'OPENHANDS_SYMPHONY_RESULT={"outcome":"completed","summary":"Implemented issue scope",'
+            '"question_or_reason":""}'
+        )
+    }
+
+    result = OpenHandsACPProvider._parse_result(OpenHandsACPProvider._final_text(payload), run)
+
+    assert result.outcome == ProviderOutcome.COMPLETED
+    assert result.summary == "Implemented issue scope"
+    assert result.raw["outcome"] == "completed"
+
+
+def test_missing_structured_result_fails_closed() -> None:
+    run = ProviderRun("codex", "conversation-id", "session-id")
+
+    result = OpenHandsACPProvider._parse_result("Agent says it is done.", run)
+
+    assert result.outcome == ProviderOutcome.FAILED
+    assert result.raw["failure_kind"] == "provider-tool"
+    assert "OPENHANDS_SYMPHONY_RESULT" in result.question_or_reason

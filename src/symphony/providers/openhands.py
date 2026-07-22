@@ -207,7 +207,12 @@ class OpenHandsACPProvider(ProviderAdapter):
         if isinstance(payload, str):
             return payload
         if isinstance(payload, dict):
-            for key in ("text", "content", "final_response", "message"):
+            # Agent Server 1.35 returns the final ACP message under `response`.
+            # Keep the older aliases for compatibility, but prefer extracting
+            # the actual text over serializing the response envelope. JSON
+            # serialization escapes the nested Symphony result record and
+            # makes an otherwise valid structured result impossible to parse.
+            for key in ("response", "text", "content", "final_response", "message"):
                 value = payload.get(key)
                 if isinstance(value, str):
                     return value
@@ -235,11 +240,17 @@ class OpenHandsACPProvider(ProviderAdapter):
                 )
             except (ValueError, TypeError, json.JSONDecodeError):
                 pass
+        # A terminal transport state is not proof that the implementation
+        # contract completed. Fail closed so malformed or missing result
+        # records cannot become successful pull requests with raw transcripts
+        # used as their summaries.
         return ProviderResult(
-            ProviderOutcome.COMPLETED,
-            text[-4000:] or "Agent completed without a structured summary.",
-            conversation_id=run.conversation_id,
-            session_id=run.session_id,
+            ProviderOutcome.FAILED,
+            "Agent completed without a valid structured result record.",
+            "The final response omitted or malformed OPENHANDS_SYMPHONY_RESULT.",
+            run.conversation_id,
+            run.session_id,
+            {"failure_kind": "provider-tool", "unstructured_response": text[-4000:]},
         )
 
     def wait(self, run: ProviderRun, timeout_seconds: int) -> ProviderResult:

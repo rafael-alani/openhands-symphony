@@ -489,7 +489,7 @@ class Store:
                 """
                 UPDATE jobs SET state=?, lease_owner=?, lease_expires_at=?,
                     heartbeat_at=?, started_at=COALESCE(started_at, ?), updated_at=?, phase='preflight',
-                    retry_requested=0, finished_at=NULL
+                    finished_at=NULL
                 WHERE id=?
                 """,
                 (JobState.RUNNING, owner, expires, now, now, now, job_id),
@@ -519,7 +519,7 @@ class Store:
             connection.execute(
                 """
                 UPDATE jobs SET attempt=?, conversation_id=COALESCE(?, conversation_id),
-                    session_id=COALESCE(?, session_id), phase='implementation', updated_at=?
+                    session_id=COALESCE(?, session_id), phase='implementation', retry_requested=0, updated_at=?
                 WHERE id=?
                 """,
                 (attempt, conversation_id, session_id, now, job_id),
@@ -628,6 +628,7 @@ class Store:
             "review_conversation_id",
             "review_session_id",
             "concurrency_key",
+            "retry_requested",
         }
         invalid = set(values) - allowed
         if invalid:
@@ -716,14 +717,10 @@ class Store:
                         or has_preconversation_provider_failure
                     )
                 )
-                retryable_review = (
-                    state == JobState.PR_OPEN
-                    and bool(row["review_required"])
-                    and str(row["phase"]) != "review-complete"
-                )
+                retryable_pr = state == JobState.PR_OPEN
                 if (
                     state in {JobState.NEEDS_GUIDANCE, JobState.BLOCKED, JobState.FAILED, JobState.CANCELED}
-                    or retryable_review
+                    or retryable_pr
                     or (state == JobState.QUEUED and reset_pre_provider_attempts)
                 ):
                     connection.execute(

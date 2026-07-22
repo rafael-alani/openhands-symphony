@@ -109,6 +109,22 @@ def test_empty_setup_script_is_disabled(tmp_path):
     assert manager.run_setup(tmp_path, "", "openhands-validator") is None
 
 
+def test_changed_paths_include_untracked_policy_and_implementation_files(tmp_path):
+    worktree = create_worktree(tmp_path, "agent/1-test")
+    gate = worktree / ".openhands" / "quality-gate.sh"
+    gate.parent.mkdir()
+    gate.write_text("#!/bin/sh\nexit 0\n")
+
+    assert WorkspaceManager.changed_paths(worktree, "main") == (".openhands/quality-gate.sh",)
+
+    (worktree / "implemented.txt").write_text("ok\n")
+
+    assert WorkspaceManager.changed_paths(worktree, "main") == (
+        ".openhands/quality-gate.sh",
+        "implemented.txt",
+    )
+
+
 def test_setup_script_must_be_a_regular_file(tmp_path):
     manager = WorkspaceManager(tmp_path)
     setup_directory = tmp_path / ".openhands"

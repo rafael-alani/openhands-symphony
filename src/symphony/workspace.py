@@ -324,6 +324,37 @@ class WorkspaceManager:
         return bool(process.stdout.strip())
 
     @staticmethod
+    def changed_paths(worktree: Path, default_branch: str) -> tuple[str, ...]:
+        """Return committed and uncommitted paths that differ from the base branch."""
+        commands = (
+            ("git", "diff", "--name-only", "-z", f"origin/{default_branch}...HEAD"),
+            ("git", "diff", "--name-only", "-z"),
+            ("git", "diff", "--cached", "--name-only", "-z"),
+            ("git", "ls-files", "--others", "--exclude-standard", "-z"),
+        )
+        paths: set[str] = set()
+        for command in commands:
+            process = subprocess.run(
+                command,
+                cwd=worktree,
+                env=validation_environment(),
+                text=True,
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+            if process.returncode != 0:
+                raise WorkspaceError(f"unable to inspect implementation paths: {redact(process.stderr)}")
+            for value in process.stdout.split("\0"):
+                if not value:
+                    continue
+                path = Path(value)
+                if path.is_absolute() or ".." in path.parts:
+                    raise WorkspaceError(f"Git reported an invalid implementation path: {value}")
+                paths.add(path.as_posix())
+        return tuple(sorted(paths))
+
+    @staticmethod
     def commits_ahead(worktree: Path, default_branch: str) -> int:
         process = subprocess.run(
             ["git", "rev-list", "--count", f"origin/{default_branch}..HEAD"],

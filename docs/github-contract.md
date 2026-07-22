@@ -34,6 +34,8 @@ The exact accepted issue comments are:
 /agent cancel
 ```
 
+`/agent retry` is also the explicit rework command for an open draft PR. Without a required reviewer, Symphony resumes the implementation conversation against the existing branch and PR; with `review:required`, it starts a fresh review and bounded repair flow. It never creates a second PR for the same generated branch, and a successful rework refreshes the wrapper-owned title and body with the corrected structured summary and current-attempt evidence.
+
 No suffix or embedded command is accepted. The webhook author association must be OWNER, MEMBER, or COLLABORATOR.
 
 Trusted command comments are keyed by their immutable GitHub comment ID. The webhook and scheduled reconciler share that durable idempotency record, so a command posted while the VM is offline is replayed once after restart without duplicating later deliveries.

@@ -347,6 +347,24 @@ class GhCLIBackend:
         self.guard_code_mutation(job, allow_existing_branch=True)
         existing = self.find_open_pr(job.repository, job.branch)
         if existing:
+            # An explicit implementation retry reuses the generated branch and
+            # draft PR. Refresh the complete wrapper-owned body so a corrected
+            # structured summary replaces any stale or malformed prior result.
+            self._run(
+                [
+                    "pr",
+                    "edit",
+                    str(existing.number),
+                    "--repo",
+                    job.repository,
+                    "--title",
+                    title,
+                    "--body",
+                    body,
+                    "--add-label",
+                    generated_label,
+                ]
+            )
             return existing
         output = self._run(
             [

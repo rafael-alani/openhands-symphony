@@ -26,6 +26,9 @@ class IntakeError(RuntimeError):
     pass
 
 
+QUALITY_GATE_PATH = ".openhands/quality-gate.sh"
+
+
 class Coordinator:
     def __init__(
         self,
@@ -567,6 +570,27 @@ class Coordinator:
             "and leave the workspace ready. Do not push or use GitHub.\n\n" + "\n\n".join(sections)
         )
 
+    @staticmethod
+    def _has_substantive_implementation(job: Job, changed_paths: tuple[str, ...]) -> bool:
+        if any(path != QUALITY_GATE_PATH for path in changed_paths):
+            return True
+        issue_text = f"{job.snapshot.title}\n{job.snapshot.body}".lower()
+        gate_is_requested = QUALITY_GATE_PATH in issue_text or "quality gate" in issue_text
+        return gate_is_requested and QUALITY_GATE_PATH in changed_paths
+
+    @staticmethod
+    def _implementation_correction_prompt(job: Job, changed_paths: tuple[str, ...]) -> str:
+        observed = ", ".join(f"`{path}`" for path in changed_paths) or "no changed paths"
+        return f"""The prior turn did not produce a substantive implementation of the accepted issue. The wrapper observed {observed}. A repository validation gate is auxiliary and does not satisfy an unrelated implementation issue by itself.
+
+Return to the original issue, inspect the existing code, and implement its smallest complete solution with relevant tests. Keep a truthful `{QUALITY_GATE_PATH}` if one is required, but do not stop after validation-policy work. Do not push or use GitHub.
+
+Original issue: #{job.issue_number} — {redact(job.snapshot.title, 1000)}
+
+<untrusted-issue-body>
+{redact(job.snapshot.body, 20_000)}
+</untrusted-issue-body>"""
+
     def _transition_from_provider_result(self, job: Job, result) -> Job | None:
         current = self.store.get_job_by_id(job.id) or job
         question = redact(result.question_or_reason or "", 4000)
@@ -727,21 +751,27 @@ class Coordinator:
             existing_pr = self.github.find_open_pr(job.repository, job.branch)
             if existing_pr:
                 job = self.store.update_job(job.id, pr_number=existing_pr.number, pr_url=existing_pr.url)
-                if not job.review_required:
+                if not job.review_required and not job.retry_requested:
                     job = self.store.transition(job.id, JobState.PR_OPEN, phase="recovered-existing-pr")
                     return self._finish(job)
-                worktree = self.workspaces.checkout(job, live)
-                job = self.store.update_job(job.id, worktree=str(worktree), phase="recovered-existing-pr-review")
-                self.workspaces.prepare_for_agent(worktree)
-                self.workspaces.verify_integrity(job, worktree)
-                job = self.store.transition(
-                    job.id,
-                    JobState.PR_OPEN,
-                    phase="recovered-existing-pr-review",
-                    release_lease=False,
-                )
-                self._sync_status(job)
-                return self._finish(self._review(job, worktree))
+                if job.review_required:
+                    worktree = self.workspaces.checkout(job, live)
+                    job = self.store.update_job(
+                        job.id,
+                        worktree=str(worktree),
+                        phase="recovered-existing-pr-review",
+                        retry_requested=False,
+                    )
+                    self.workspaces.prepare_for_agent(worktree)
+                    self.workspaces.verify_integrity(job, worktree)
+                    job = self.store.transition(
+                        job.id,
+                        JobState.PR_OPEN,
+                        phase="recovered-existing-pr-review",
+                        release_lease=False,
+                    )
+                    self._sync_status(job)
+                    return self._finish(self._review(job, worktree))
 
             auth = provider.auth_status()
             healthy, health_detail = provider.health()
@@ -854,14 +884,28 @@ class Coordinator:
 
             corrections = 0
             while True:
+                changed_paths = self.workspaces.changed_paths(worktree, live.default_branch)
+                substantive = self._has_substantive_implementation(job, changed_paths)
                 ok, validation_summary, results = self._run_validations(job, worktree)
                 job = self.store.update_job(job.id, validation_summary=validation_summary, phase="validation")
-                if ok:
+                if ok and substantive:
                     break
                 if (
                     corrections >= self.config.scheduler.max_implementation_corrections
                     or not provider.capabilities.supports_resume
                 ):
+                    if not substantive:
+                        job = self.store.transition(
+                            job.id,
+                            JobState.FAILED,
+                            phase="implementation-incomplete",
+                            validation_summary=validation_summary,
+                            terminal_reason=(
+                                "The agent did not produce substantive issue changes after the bounded correction "
+                                "limit; validation-policy changes alone cannot satisfy the issue."
+                            ),
+                        )
+                        return self._finish(job)
                     job = self.store.transition(
                         job.id,
                         JobState.FAILED,
@@ -871,9 +915,15 @@ class Coordinator:
                     )
                     return self._finish(job)
                 corrections += 1
-                self.store.record_event(job.id, "validation-correction", {"pass": corrections})
+                correction_kind = "validation-correction" if substantive else "implementation-correction"
+                self.store.record_event(job.id, correction_kind, {"pass": corrections})
+                prompts = []
+                if not substantive:
+                    prompts.append(self._implementation_correction_prompt(job, changed_paths))
+                if not ok:
+                    prompts.append(self._validation_failure_prompt(results, validation_summary))
                 with self._provider_slot(job, provider):
-                    provider.resume(run, self._validation_failure_prompt(results, validation_summary))
+                    provider.resume(run, "\n\n".join(prompts))
                     result = self._wait(job, provider, run)
                 stopped = self._transition_from_provider_result(job, result)
                 if stopped:
@@ -894,7 +944,11 @@ class Coordinator:
             branch_exists = self.github.remote_branch_exists(job.repository, job.branch)
             branch_matches = branch_exists and self.workspaces.remote_matches(worktree, job.repository, job.branch)
             self._require_live_lease(job)
-            self.github.guard_code_mutation(job, allow_existing_branch=branch_matches)
+            reworking_current_pr = bool(existing_pr and existing_pr.number == job.pr_number)
+            self.github.guard_code_mutation(
+                job,
+                allow_existing_branch=branch_matches or reworking_current_pr,
+            )
             if not branch_matches:
                 self.workspaces.push(worktree, job.repository, job.branch)
 
@@ -1085,7 +1139,9 @@ class Coordinator:
 """
 
     def _validation_markdown(self, job: Job) -> str:
-        validations = self.store.validations(job.id)
+        validations = [
+            result for result in self.store.validations(job.id) if int(result.get("attempt", -1)) == job.attempt
+        ]
         lines = []
         for result in validations:
             command = shlex.join(json.loads(str(result["command_json"])))

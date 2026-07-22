@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 from conftest import issue
 
-from symphony.github import STATUS_MARKER, GhCLIBackend, StaleIssueError
+from symphony.github import STATUS_MARKER, GhCLIBackend, PullRequest, StaleIssueError
 from symphony.intake import branch_name
 from symphony.store import Store
 
@@ -129,3 +129,45 @@ def test_pr_validation_update_preserves_generated_summary_and_risks(tmp_path, mo
     assert "- `pytest` — **PASS**" in updated
     assert "- old" not in updated
     assert "Keep this too." in updated
+
+
+def test_existing_generated_pr_gets_refreshed_summary_on_rework(tmp_path, monkeypatch):
+    snapshot = issue()
+    store = Store(tmp_path / "state.db")
+    job, _ = store.ensure_job(
+        snapshot,
+        "codex",
+        None,
+        False,
+        branch_name(snapshot.number, snapshot.title),
+        snapshot.repository,
+    )
+    job = store.update_job(job.id, pr_number=7, pr_url="https://example.test/pull/7")
+    backend = GhCLIBackend((snapshot.repository,))
+    edits: list[list[str]] = []
+    monkeypatch.setattr(backend, "guard_code_mutation", lambda current, allow_existing_branch: snapshot)
+    monkeypatch.setattr(
+        backend,
+        "find_open_pr",
+        lambda repository, branch: PullRequest(7, "https://example.test/pull/7", True, branch),
+    )
+    monkeypatch.setattr(backend, "_run", lambda args, json_output=False: edits.append(args) or "")
+
+    pr = backend.create_draft_pr(job, "Correct title", "Correct structured body", "generated-by-agent")
+
+    assert pr.number == 7
+    assert edits == [
+        [
+            "pr",
+            "edit",
+            "7",
+            "--repo",
+            snapshot.repository,
+            "--title",
+            "Correct title",
+            "--body",
+            "Correct structured body",
+            "--add-label",
+            "generated-by-agent",
+        ]
+    ]

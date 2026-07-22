@@ -142,6 +142,59 @@ def test_first_architecture_issue_can_bootstrap_repository_quality_gate(tmp_path
     assert store.validations(job.id)[0]["command_json"] == '["bash", ".openhands/quality-gate.sh"]'
 
 
+def test_gate_only_change_cannot_be_accepted_as_issue_implementation(tmp_path):
+    snapshot = issue(title="Migrate interactions to PostgreSQL", body="Replace JSON persistence with PostgreSQL.")
+    config = make_config(tmp_path)
+    config = replace(
+        config,
+        repositories={snapshot.repository: replace(config.repositories[snapshot.repository], validation_commands=())},
+    )
+    store = Store(config.service.state_dir / "state.db")
+    github = FakeGitHub([snapshot])
+    provider = FakeProvider(
+        "codex",
+        write_files={".openhands/quality-gate.sh": "#!/bin/sh\nset -eu\nexit 0\n"},
+    )
+    coordinator = Coordinator(config, store, github, {"codex": provider})
+    job, _ = coordinator.enqueue(snapshot)
+    coordinator.workspaces = ExistingWorkspace(create_worktree(tmp_path, job.branch))
+
+    result = coordinator.run_claimed(_claim(store, config))
+
+    assert result.state == JobState.FAILED
+    assert result.phase == "implementation-incomplete"
+    assert github.pr_creates == 0
+    assert len(provider.resumes) == 1
+    assert "does not satisfy an unrelated implementation issue" in (provider.resumes[0][1] or "")
+
+
+def test_pr_validation_only_shows_current_attempt_evidence(tmp_path):
+    snapshot = issue()
+    config = make_config(tmp_path)
+    store = Store(config.service.state_dir / "state.db")
+    coordinator = Coordinator(config, store, FakeGitHub([snapshot]), {"codex": FakeProvider("codex")})
+    job, _ = coordinator.enqueue(snapshot)
+    old_time = utcnow()
+    store.record_validation(
+        job.id,
+        0,
+        ValidationResult(("bash", "broken-setup.sh"), 1, old_time, old_time, "old failure"),
+    )
+    claimed = _claim(store, config)
+    current = store.begin_attempt(claimed.id, conversation_id="conversation-id")
+    current_time = utcnow()
+    store.record_validation(
+        job.id,
+        current.attempt,
+        ValidationResult(("npm", "test"), 0, current_time, current_time, "pass"),
+    )
+
+    markdown = coordinator._validation_markdown(current)
+
+    assert "npm test" in markdown
+    assert "broken-setup.sh" not in markdown
+
+
 def test_missing_bootstrap_gate_produces_a_focused_correction_prompt() -> None:
     summary = "No validation commands or .openhands/quality-gate.sh are configured; proof is required before push."
 
@@ -440,9 +493,46 @@ def test_explicit_retry_resumes_incomplete_review_on_existing_pr(tmp_path):
 
     assert second.state == JobState.PR_OPEN
     assert second.phase == "review-complete"
+    assert not second.retry_requested
     assert len(reviewer.starts) == 2
     assert github.pr_creates == 1
     assert len(github.reviews) == 1
+
+
+def test_explicit_retry_reworks_existing_pr_without_creating_another(tmp_path):
+    snapshot = issue()
+    config = make_config(tmp_path)
+    store = Store(config.service.state_dir / "state.db")
+    github = FakeGitHub([snapshot])
+
+    class ReworkingProvider(FakeProvider):
+        def resume(self, run, prompt=None):
+            resumed = super().resume(run, prompt)
+            (self.starts[0][0] / "reworked.txt").write_text("fixed\n")
+            return resumed
+
+    provider = ReworkingProvider("codex", write_files={"implemented.txt": "ok\n"})
+    coordinator = Coordinator(config, store, github, {"codex": provider})
+    job, _ = coordinator.enqueue(snapshot)
+    worktree = create_worktree(tmp_path, job.branch)
+    coordinator.workspaces = ExistingWorkspace(worktree)
+    first = coordinator.run_claimed(_claim(store, config))
+    assert first.state == JobState.PR_OPEN
+
+    retried = coordinator.control(snapshot.repository, snapshot.number, "retry")
+    assert retried and retried.state == JobState.QUEUED
+    assert retried.retry_requested
+    claimed = _claim(store, config)
+    assert claimed.retry_requested
+
+    second = coordinator.run_claimed(claimed)
+
+    assert second.state == JobState.PR_OPEN
+    assert second.attempt == 2
+    assert len(provider.resumes) == 1
+    assert github.pr_creates == 1
+    assert len(github.pr_bodies) == 2
+    assert (worktree / "reworked.txt").read_text() == "fixed\n"
 
 
 def test_pause_after_restart_targets_durable_reviewer_conversation(tmp_path):

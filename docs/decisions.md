@@ -30,6 +30,8 @@ Agents edit only worktrees. The wrapper performs comments, labels, commits, push
 
 No passing validation evidence means no PR. Operators may pin commands in service configuration; otherwise the first suitable architecture issue proposes a repository-owned `.openhands/quality-gate.sh` based on the actual toolchain. The credential-free wrapper runs that gate before pushing even the bootstrap draft PR, records exact commands/exit/output, and permits only a bounded correction. Provider prose is never treated as test evidence, and a human still decides whether to merge the proposed bootstrap gate.
 
+A validation-policy-only diff cannot satisfy an unrelated implementation issue. Before push, the wrapper requires at least one changed path beyond `.openhands/quality-gate.sh` unless the accepted issue explicitly requests that gate. Agent Server completion also fails closed unless the final response contains the structured Symphony result record; response envelopes are unwrapped before parsing rather than copied into PR summaries.
+
 ## Subscription-first providers
 
 Claude and Codex are wired to reuse worker-owned subscription login through ACP. Antigravity 1.1.5 documents `agy --print`; a minimal custom ACP bridge invokes that official headless mode. There is no screen scraping, API-key fallback, or provider substitution. Native Antigravity conversation resume is not claimed because print mode exposes no stable machine-readable conversation ID. Antigravity is disabled in the example until a subscription-backed Ubuntu smoke run proves the full path.
@@ -55,6 +57,8 @@ The Canvas API key is root-owned and readable only by the orchestrator service g
 GitHub forbids a PR author from approving or requesting changes on its own PR. The wrapper therefore posts the independent result as a real COMMENT review, records the reviewer's recommendation separately, and uses substantive findings—not the GitHub event type—to drive bounded repairs.
 
 After every repair validation and every newly observed CI state, the orchestrator replaces only the generated PR body's Validation section. This keeps command outcomes and current CI evidence attached to the PR without overwriting the implementation summary or risks.
+
+The PR body shows validation evidence from the current implementation attempt. The VM run report retains all earlier attempts and failures for audit history.
 
 ## Browser is a tool, not a second model
 

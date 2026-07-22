@@ -102,6 +102,7 @@ class FakeGitHub:
     def create_draft_pr(self, job: Job, title: str, body: str, generated_label: str) -> PullRequest:
         existing = self.find_open_pr(job.repository, job.branch)
         if existing:
+            self.pr_bodies.append(body)
             return existing
         self.pr_creates += 1
         pr = PullRequest(
@@ -204,6 +205,12 @@ class ExistingWorkspace:
         from symphony.workspace import WorkspaceManager
 
         return WorkspaceManager.has_changes(worktree)
+
+    @staticmethod
+    def changed_paths(worktree: Path, default_branch: str) -> tuple[str, ...]:
+        from symphony.workspace import WorkspaceManager
+
+        return WorkspaceManager.changed_paths(worktree, default_branch)
 
     @staticmethod
     def commits_ahead(worktree: Path, default_branch: str) -> int:

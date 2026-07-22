@@ -137,13 +137,13 @@ def _job_status_line(job: Job, report_dir: Path) -> str:
 def _job_needs_explicit_retry(job: Job | None) -> bool:
     if job is None:
         return False
-    retryable_review = job.state.value == "pr-open" and job.review_required and job.phase != "review-complete"
+    retryable_pr = job.state.value == "pr-open"
     polluted_queued_attempts = (
         job.state.value == "queued" and job.attempt > 0 and not job.conversation_id and not job.pr_number
     )
     return (
         job.state.value in {"needs-guidance", "blocked", "failed", "canceled"}
-        or retryable_review
+        or retryable_pr
         or polluted_queued_attempts
     )
 

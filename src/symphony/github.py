@@ -44,7 +44,7 @@ class GitHubBackend(Protocol):
     def pr_state(self, repository: str, pr_number: int) -> dict[str, Any]: ...
     def post_review(self, repository: str, pr_number: int, body: str, event: str) -> None: ...
     def set_control_state(self, repository: str, issue_number: int, command: str) -> None: ...
-    def ensure_contract_labels(self, repository: str, labels: dict[str, tuple[str, str]]) -> None: ...
+    def ensure_contract_labels(self, repository: str, labels: dict[str, tuple[str, str]]) -> int: ...
 
 
 class GhCLIBackend:
@@ -468,9 +468,26 @@ class GhCLIBackend:
             return
         self._run(args)
 
-    def ensure_contract_labels(self, repository: str, labels: dict[str, tuple[str, str]]) -> None:
+    def ensure_contract_labels(self, repository: str, labels: dict[str, tuple[str, str]]) -> int:
         self._allowed(repository)
+        rows = self._run(
+            ["label", "list", "--repo", repository, "--limit", "1000", "--json", "name,color,description"],
+            json_output=True,
+        )
+        if not isinstance(rows, list):
+            raise GitHubError("gh returned an invalid label list")
+        existing = {
+            str(row.get("name") or ""): (
+                str(row.get("color") or "").upper(),
+                str(row.get("description") or ""),
+            )
+            for row in rows
+            if isinstance(row, dict)
+        }
+        changed = 0
         for name, (color, description) in labels.items():
+            if existing.get(name) == (color.upper(), description):
+                continue
             self._run(
                 [
                     "label",
@@ -485,3 +502,5 @@ class GhCLIBackend:
                     description,
                 ]
             )
+            changed += 1
+        return changed

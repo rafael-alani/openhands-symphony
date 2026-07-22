@@ -132,8 +132,8 @@ class FakeGitHub:
             "isDraft": (repository, pr_number) not in self.merged_prs,
         }
 
-    def ensure_contract_labels(self, repository: str, labels: dict[str, tuple[str, str]]) -> None:
-        return None
+    def ensure_contract_labels(self, repository: str, labels: dict[str, tuple[str, str]]) -> int:
+        return 0
 
 
 def issue(

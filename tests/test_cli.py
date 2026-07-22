@@ -65,6 +65,65 @@ def test_github_auth_skips_oauth_but_keeps_git_credential_setup(monkeypatch, cap
     assert "github is already authenticated; no login needed" in capsys.readouterr().out
 
 
+def test_github_auth_runs_oauth_only_after_status_probe_fails(monkeypatch) -> None:
+    commands: list[list[str]] = []
+    statuses = iter([1, 0, 0, 0])
+    monkeypatch.setattr(
+        cli,
+        "_run_interactive",
+        lambda command, **_kwargs: commands.append(command) or next(statuses),
+    )
+
+    assert cli._authenticate_provider("github") == 0
+
+    assert commands == [
+        ["gh", "auth", "status", "--hostname", "github.com"],
+        ["gh", "auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"],
+        ["gh", "auth", "status", "--hostname", "github.com"],
+        ["gh", "auth", "setup-git"],
+    ]
+
+
+def test_antigravity_auth_skips_oauth_when_status_succeeds(tmp_path, monkeypatch, capsys) -> None:
+    commands: list[list[str]] = []
+    monkeypatch.setenv("SYMPHONY_AUTH_MARKER_DIR", str(tmp_path))
+    monkeypatch.setattr(cli, "_antigravity_cpu_error", lambda: None)
+    monkeypatch.setattr(cli, "_run_interactive", lambda command, **_kwargs: commands.append(command) or 0)
+
+    assert cli._authenticate_provider("antigravity") == 0
+
+    assert commands == [["agy", "models"]]
+    assert (tmp_path / "antigravity.json").is_file()
+    assert "antigravity is already authenticated; no login needed" in capsys.readouterr().out
+
+
+def test_start_skips_systemctl_start_when_target_is_already_active(monkeypatch, capsys) -> None:
+    commands: list[list[str]] = []
+    monkeypatch.setattr(cli, "_run_interactive", lambda command, **_kwargs: commands.append(command) or 0)
+
+    assert cli._systemctl("start") == 0
+
+    assert commands == [["systemctl", "is-active", "--quiet", "openhands-symphony.target"]]
+    assert "already active; no start needed" in capsys.readouterr().out
+
+
+def test_start_runs_systemctl_start_when_target_is_inactive(monkeypatch) -> None:
+    commands: list[list[str]] = []
+    statuses = iter([3, 0])
+    monkeypatch.setattr(
+        cli,
+        "_run_interactive",
+        lambda command, **_kwargs: commands.append(command) or next(statuses),
+    )
+
+    assert cli._systemctl("start") == 0
+
+    assert commands == [
+        ["systemctl", "is-active", "--quiet", "openhands-symphony.target"],
+        ["systemctl", "start", "openhands-symphony.target"],
+    ]
+
+
 def test_auth_runs_oauth_only_after_status_probe_fails(tmp_path, monkeypatch) -> None:
     commands: list[list[str]] = []
     statuses = iter([1, 0, 0])

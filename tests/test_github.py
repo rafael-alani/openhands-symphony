@@ -8,6 +8,58 @@ from symphony.intake import branch_name
 from symphony.store import Store
 
 
+def test_contract_labels_skip_matching_remote_labels(monkeypatch):
+    backend = GhCLIBackend(("solo/project",))
+    calls: list[tuple[list[str], bool]] = []
+
+    def fake_run(args, *, json_output=False):
+        calls.append((args, json_output))
+        return [{"name": "agent:ready", "color": "0e8a16", "description": "Ready"}]
+
+    monkeypatch.setattr(backend, "_run", fake_run)
+
+    assert backend.ensure_contract_labels("solo/project", {"agent:ready": ("0E8A16", "Ready")}) == 0
+    assert calls == [
+        (
+            [
+                "label",
+                "list",
+                "--repo",
+                "solo/project",
+                "--limit",
+                "1000",
+                "--json",
+                "name,color,description",
+            ],
+            True,
+        )
+    ]
+
+
+def test_contract_labels_create_only_missing_or_changed_labels(monkeypatch):
+    backend = GhCLIBackend(("solo/project",))
+    writes: list[list[str]] = []
+
+    def fake_run(args, *, json_output=False):
+        if json_output:
+            return [{"name": "agent:ready", "color": "FFFFFF", "description": "Old"}]
+        writes.append(args)
+        return ""
+
+    monkeypatch.setattr(backend, "_run", fake_run)
+
+    changed = backend.ensure_contract_labels(
+        "solo/project",
+        {
+            "agent:ready": ("0E8A16", "Ready"),
+            "agent:codex": ("1F6FEB", "Codex"),
+        },
+    )
+
+    assert changed == 2
+    assert [command[2] for command in writes] == ["agent:ready", "agent:codex"]
+
+
 def test_canonical_status_comment_must_be_owned_by_authenticated_bot(monkeypatch):
     backend = GhCLIBackend(("solo/project",), bot_login="symphony-bot")
     comments = [

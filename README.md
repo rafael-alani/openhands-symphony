@@ -41,13 +41,14 @@ sudo systemctl start openhands-agent-keyring.service
 sudo -iu openhands-symphony agentctl auth github
 sudo -iu openhands-agent agentctl auth claude
 sudo -iu openhands-agent agentctl auth codex
+sudo -iu openhands-agent agentctl auth antigravity
 sudo -iu openhands-symphony agentctl labels
 sudo agentctl start
 sudo -iu openhands-symphony agentctl doctor
 sudo -iu openhands-symphony agentctl status
 ```
 
-Each `agentctl auth` command checks the provider's official login status first. If that account is already authenticated, it reports that no login is needed and does not start OAuth, so this block is safe to repeat after an installer rerun.
+Once the optional Antigravity prerequisites below are met, this whole block is safe to repeat; otherwise omit that one line. A direct `systemctl start` is already idempotent. Each `agentctl auth` command—including GitHub—checks official login status first, reports and skips OAuth for an existing login, and otherwise logs in normally. `agentctl labels` skips labels whose color and description already match, while `agentctl start` skips an already-active target. `doctor` and `status` always rerun because they are read-only checks of current state.
 
 Antigravity is disabled by default. Do not authenticate or probe it unless you explicitly enable it after verifying that the VM CPU exposes the instruction-set features required by its official binary.
 Its official executable is `agy`, not `antigravity`. For an optional worker-account login, `agentctl auth antigravity` forces the remote SSH URL/code flow even though `sudo -iu` removes the original SSH environment: open the printed URL locally, then paste only the alphanumeric code displayed by the browser back into the terminal.

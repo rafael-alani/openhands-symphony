@@ -124,6 +124,11 @@ def _parse_item(value: str) -> tuple[str, int]:
 
 
 def _systemctl(action: str) -> int:
+    if action == "start" and _run_interactive(
+        ["systemctl", "is-active", "--quiet", "openhands-symphony.target"]
+    ) == 0:
+        print("openhands-symphony.target is already active; no start needed")
+        return 0
     return _run_interactive(["systemctl", action, "openhands-symphony.target"])
 
 
@@ -205,8 +210,11 @@ def main() -> None:
         from .labels import LABEL_CONTRACT
 
         for repository in config.github.allowed_repositories:
-            coordinator.github.ensure_contract_labels(repository, LABEL_CONTRACT)
-            print(f"{repository}: labels ready")
+            changed = coordinator.github.ensure_contract_labels(repository, LABEL_CONTRACT)
+            if changed:
+                print(f"{repository}: labels ready ({changed} created or updated)")
+            else:
+                print(f"{repository}: labels already ready; no changes needed")
         raise SystemExit(0)
     if args.command == "run":
         repository, issue_number = args.item

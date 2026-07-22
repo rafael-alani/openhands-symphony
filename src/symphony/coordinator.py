@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import random
 import shlex
@@ -591,7 +592,56 @@ Original issue: #{job.issue_number} — {redact(job.snapshot.title, 1000)}
 {redact(job.snapshot.body, 20_000)}
 </untrusted-issue-body>"""
 
+    def _publish_provider_result(self, job: Job, result) -> None:
+        summary = redact(result.summary or "No summary was returned.", 12_000)
+        question = redact(result.question_or_reason or "", 8_000)
+        outcome = str(result.outcome)
+        conversation_id = result.conversation_id or job.conversation_id or "unknown"
+        digest = hashlib.sha256(
+            f"{job.id}\0{job.attempt}\0{conversation_id}\0{outcome}\0{summary}\0{question}".encode()
+        ).hexdigest()[:20]
+        marker = f"<!-- openhands-symphony-agent-result:{job.id}:{digest} -->"
+        action = (
+            f"\n\n#### Action required / reason\n\n<pre>{html.escape(question)}</pre>"
+            if question
+            else ""
+        )
+        next_step = (
+            "Reply with normal issue guidance, then post `/agent resume` as a separate exact comment."
+            if result.outcome == ProviderOutcome.NEEDS_GUIDANCE
+            else "The wrapper will now apply its validation and state-transition policy."
+        )
+        body = f"""### Agent turn result: `{outcome}`
+
+- Provider: `{job.implementation_provider}`
+- Attempt: `{job.attempt}`
+- Conversation: `{conversation_id}`
+- Run ID: `{job.id}`
+
+#### Summary
+
+<pre>{html.escape(summary)}</pre>{action}
+
+{next_step}
+
+This is the provider's structured final response. Hidden reasoning and raw tool logs are not published."""
+        self.store.record_event(
+            job.id,
+            "provider-result",
+            {
+                "outcome": outcome,
+                "summary": summary,
+                "question_or_reason": question,
+                "conversation_id": conversation_id,
+            },
+        )
+        self.github.post_agent_result_comment(job, marker, body)
+
     def _transition_from_provider_result(self, job: Job, result) -> Job | None:
+        # Publish the structured provider response before any resulting label
+        # transition so GitHub-only operators see the question/result in the
+        # issue timeline rather than having to discover an edited old comment.
+        self._publish_provider_result(job, result)
         current = self.store.get_job_by_id(job.id) or job
         question = redact(result.question_or_reason or "", 4000)
         summary = redact(result.summary or "", 4000)

@@ -23,6 +23,8 @@ Recommended colors/descriptions are in `symphony.labels.LABEL_CONTRACT`; `agentc
 
 One comment per issue contains a hidden marker and is edited in place. It shows state, provider/attempt, start/elapsed time, phase, branch, PR, validation summary, focused question/failure, and run ID. Reconciliation searches for the marker if the stored comment ID is missing.
 
+Each completed provider turn also creates one idempotent visible issue comment before its resulting state-label transition. That comment contains the structured summary, focused question/reason, provider, attempt, conversation, and run ID. It is the GitHub-only operator handoff; hidden reasoning and raw tool logs remain excluded. Provider-result comments carry unique hidden markers and are never echoed back to a resumed agent as operator guidance.
+
 ## Commands
 
 The exact accepted issue comments are:

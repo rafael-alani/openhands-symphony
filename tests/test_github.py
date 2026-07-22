@@ -3,7 +3,13 @@ from dataclasses import replace
 import pytest
 from conftest import issue
 
-from symphony.github import STATUS_MARKER, GhCLIBackend, PullRequest, StaleIssueError
+from symphony.github import (
+    AGENT_RESULT_MARKER_PREFIX,
+    STATUS_MARKER,
+    GhCLIBackend,
+    PullRequest,
+    StaleIssueError,
+)
 from symphony.intake import branch_name
 from symphony.store import Store
 
@@ -73,6 +79,52 @@ def test_canonical_status_comment_must_be_owned_by_authenticated_bot(monkeypatch
 
     monkeypatch.setattr(backend, "_run", fake_run)
     assert backend._find_status_comment("solo/project", 7) == 2
+
+
+def test_agent_result_comment_is_idempotent_by_owned_marker(tmp_path, monkeypatch):
+    snapshot = issue()
+    store = Store(tmp_path / "state.db")
+    job, _ = store.ensure_job(
+        snapshot,
+        "codex",
+        None,
+        False,
+        branch_name(snapshot.number, snapshot.title),
+        snapshot.repository,
+    )
+    backend = GhCLIBackend((snapshot.repository,), bot_login="symphony-bot")
+    marker = f"{AGENT_RESULT_MARKER_PREFIX}{job.id}:abc -->"
+    monkeypatch.setattr(
+        backend,
+        "_paginated_issue_comments",
+        lambda repository, path: [{"id": 42, "body": f"{marker}\nExisting", "user": {"login": "symphony-bot"}}],
+    )
+    monkeypatch.setattr(
+        backend,
+        "_run",
+        lambda args, json_output=False: (_ for _ in ()).throw(AssertionError("duplicate post")),
+    )
+
+    assert backend.post_agent_result_comment(job, marker, "Replacement") == 42
+
+
+def test_agent_result_comments_are_not_replayed_as_operator_guidance(monkeypatch):
+    backend = GhCLIBackend(("solo/project",))
+    monkeypatch.setattr(
+        backend,
+        "_run",
+        lambda args, json_output=False: [
+            {
+                "body": f"{AGENT_RESULT_MARKER_PREFIX}run:digest -->\nAgent output",
+                "user": {"login": "symphony-bot"},
+            },
+            {"body": "Use the local test database.", "user": {"login": "operator"}},
+        ],
+    )
+
+    assert backend.recent_issue_comments("solo/project", 7) == [
+        "Comment by operator:\nUse the local test database."
+    ]
 
 
 def test_mutation_guard_rejects_changed_review_routing(tmp_path, monkeypatch):

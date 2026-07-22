@@ -39,6 +39,8 @@ def test_success_opens_one_draft_pr_with_validation_evidence(tmp_path):
     assert "**PASS**" in github.pr_bodies[0]
     assert "CI: tests=SUCCESS" in result.validation_summary
     assert store.validations(job.id)[0]["exit_code"] == 0
+    assert len(github.agent_result_comments) == 1
+    assert "Fake implementation completed." in github.agent_result_comments[0][1]
     coalesced, created_again = coordinator.enqueue(snapshot)
     assert not created_again and coalesced.id == job.id
     assert github.pr_creates == 1
@@ -574,6 +576,12 @@ def test_needs_guidance_stops_without_pr(tmp_path):
     assert result.state == JobState.NEEDS_GUIDANCE
     assert "option A" in result.actionable_message
     assert github.pr_creates == 0
+    assert len(github.agent_result_comments) == 1
+    assert "needs-guidance" in github.agent_result_comments[0][1]
+    assert "Choose option A or option B." in github.agent_result_comments[0][1]
+    assert "/agent resume" in github.agent_result_comments[0][1]
+    provider_events = [event for event in store.events(job.id) if event["kind"] == "provider-result"]
+    assert len(provider_events) == 1
 
 
 def test_transport_quota_error_is_distinct_from_provider_tool_failure(tmp_path):

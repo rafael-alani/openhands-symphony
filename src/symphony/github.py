@@ -10,6 +10,7 @@ from .intake import SYSTEM_STATE_LABELS, TRUSTED_ASSOCIATIONS, parse_control_com
 from .models import IssueSnapshot, Job, JobState
 
 STATUS_MARKER = "<!-- openhands-symphony-status -->"
+AGENT_RESULT_MARKER_PREFIX = "<!-- openhands-symphony-agent-result:"
 
 
 class GitHubError(RuntimeError):
@@ -37,6 +38,7 @@ class GitHubBackend(Protocol):
     def recent_issue_comments(self, repository: str, issue_number: int) -> list[str]: ...
     def list_control_commands(self, repository: str) -> list[tuple[int, int, str]]: ...
     def update_status_comment(self, job: Job, body: str) -> int: ...
+    def post_agent_result_comment(self, job: Job, marker: str, body: str) -> int: ...
     def set_state_labels(self, job: Job, state: JobState) -> None: ...
     def create_draft_pr(self, job: Job, title: str, body: str, generated_label: str) -> PullRequest: ...
     def update_pr_validation(self, job: Job, validation: str) -> None: ...
@@ -199,7 +201,11 @@ class GhCLIBackend:
         for row in reversed(rows):
             author = str((row.get("user") or {}).get("login") or "unknown")
             body = str(row.get("body") or "")
-            if STATUS_MARKER in body or body.strip().lower().startswith("/agent"):
+            if (
+                STATUS_MARKER in body
+                or AGENT_RESULT_MARKER_PREFIX in body
+                or body.strip().lower().startswith("/agent")
+            ):
                 continue
             result.append(f"Comment by {author}:\n{body}")
         return result
@@ -304,6 +310,34 @@ class GhCLIBackend:
                 ]
             )
             return comment_id
+        payload = self._run(
+            [
+                "api",
+                "--method",
+                "POST",
+                f"repos/{job.repository}/issues/{job.issue_number}/comments",
+                "-f",
+                f"body={rendered}",
+            ],
+            json_output=True,
+        )
+        return int(payload["id"])
+
+    def post_agent_result_comment(self, job: Job, marker: str, body: str) -> int:
+        """Publish one visible, idempotent issue comment for a structured provider turn."""
+        if not marker.startswith(AGENT_RESULT_MARKER_PREFIX) or not marker.endswith(" -->"):
+            raise GitHubError("invalid agent-result marker")
+        comments = self._paginated_issue_comments(
+            job.repository,
+            f"repos/{job.repository}/issues/{job.issue_number}/comments?per_page=100",
+        )
+        bot_login = self._bot_login()
+        for comment in comments:
+            author = str((comment.get("user") or {}).get("login") or "")
+            if author == bot_login and marker in str(comment.get("body") or ""):
+                return int(comment["id"])
+        self._live_issue_guard(job)
+        rendered = f"{marker}\n{body}"
         payload = self._run(
             [
                 "api",

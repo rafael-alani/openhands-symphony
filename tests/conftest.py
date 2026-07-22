@@ -26,6 +26,7 @@ class FakeGitHub:
         self.reviews: list[tuple[str, int, str, str]] = []
         self.pr_bodies: list[str] = []
         self.pr_body_updates: list[str] = []
+        self.agent_result_comments: list[tuple[str, str]] = []
         self.merged_prs: set[tuple[str, int]] = set()
         self.control_commands: dict[str, list[tuple[int, int, str]]] = {}
 
@@ -83,6 +84,10 @@ class FakeGitHub:
             self.comment_ids[key] = 100 + self.comment_creates
         self.comment_bodies[key] = body
         return self.comment_ids[key]
+
+    def post_agent_result_comment(self, job: Job, marker: str, body: str) -> int:
+        self.agent_result_comments.append((marker, body))
+        return 10_000 + len(self.agent_result_comments)
 
     def set_state_labels(self, job: Job, state: JobState) -> None:
         self.label_updates += 1

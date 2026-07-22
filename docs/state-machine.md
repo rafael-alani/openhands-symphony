@@ -19,7 +19,7 @@ pr-open -> done only after later reconciliation observes the merged/closed resul
 
 ## Claim and lease
 
-Claiming atomically inserts a lease, moves `queued` to `running`, increments the attempt, records the owner/expiry, and starts heartbeat timestamps. Heartbeats renew the lease. A worker cancellation or `/agent pause` interrupts the OpenHands conversation.
+Claiming atomically inserts a lease, moves `queued` to `running`, records the owner/expiry, and starts heartbeat timestamps. The implementation attempt is incremented only after live-issue preflight, provider authentication/health checks, checkout, integrity checks, and repository setup succeed, immediately before starting or resuming provider work. Setup and preflight failures therefore do not spend the bounded implementation-attempt budget. Heartbeats renew the lease. A worker cancellation or `/agent pause` interrupts the OpenHands conversation.
 
 At restart, unexpired leases remain authoritative. After expiry, reconciliation first interrupts the durable OpenHands implementation, reviewer, or repair conversation. Only after cancellation succeeds does it remove the lease and return implementation to `queued`; interrupted review work is requeued against the preserved PR. If the provider/cancel endpoint is unavailable, the job stops for guidance and is not made runnable. The next worker resumes the interrupted OpenHands conversation when supported or starts a fresh review process; attempts remain bounded.
 

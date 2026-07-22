@@ -29,13 +29,17 @@ class ReportWriter:
         json_path = directory / "run.json"
         markdown_path = directory / "run.md"
         json_path.write_text(redact(json.dumps(payload, indent=2, sort_keys=True, default=str), 5_000_000) + "\n")
-        markdown_path.write_text(self._markdown(job, validations))
+        markdown_path.write_text(self._markdown(job, validations, events))
         os.chmod(json_path, 0o600)
         os.chmod(markdown_path, 0o600)
         return markdown_path, json_path
 
     @staticmethod
-    def _markdown(job: Job, validations: list[dict[str, object]]) -> str:
+    def _markdown(
+        job: Job,
+        validations: list[dict[str, object]],
+        events: list[dict[str, object]],
+    ) -> str:
         lines = [
             f"# Run {job.id}",
             "",
@@ -69,5 +73,20 @@ class ReportWriter:
                     "```",
                     "",
                 ]
+            )
+        lines.extend(["", "## Event history", ""])
+        for event in events:
+            try:
+                detail = json.loads(str(event["detail_json"]))
+            except (KeyError, TypeError, ValueError):
+                detail = {}
+            transition = ""
+            if detail.get("from") or detail.get("to"):
+                transition = f" {detail.get('from', '?')} -> {detail.get('to', '?')}"
+            phase = f" phase={detail['phase']}" if detail.get("phase") else ""
+            message = detail.get("terminal_reason") or detail.get("actionable_message") or ""
+            suffix = f" — {redact(str(message), 10_000)}" if message else ""
+            lines.append(
+                f"- `{event.get('at', 'unknown')}` `{event.get('kind', 'event')}`{transition}{phase}{suffix}"
             )
         return "\n".join(lines) + "\n"

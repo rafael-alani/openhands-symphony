@@ -8,7 +8,7 @@ import pytest
 from conftest import ExistingWorkspace, FakeGitHub, create_worktree, issue, make_config
 
 from symphony.coordinator import Coordinator, IntakeError
-from symphony.models import AuthStatus, JobState, ProviderOutcome, QuotaState
+from symphony.models import AuthStatus, JobState, ProviderOutcome, QuotaState, ValidationResult, utcnow
 from symphony.providers.fake import FakeProvider
 from symphony.providers.openhands import OpenHandsProviderError
 from symphony.store import Store
@@ -43,6 +43,75 @@ def test_success_opens_one_draft_pr_with_validation_evidence(tmp_path):
     assert not created_again and coalesced.id == job.id
     assert github.pr_creates == 1
     assert github.comment_creates == 1
+
+
+def test_setup_failure_does_not_consume_an_implementation_attempt(tmp_path):
+    snapshot = issue()
+    config = make_config(tmp_path)
+    store = Store(config.service.state_dir / "state.db")
+    provider = FakeProvider("codex")
+    coordinator = Coordinator(config, store, FakeGitHub([snapshot]), {"codex": provider})
+    job, _ = coordinator.enqueue(snapshot)
+    worktree = create_worktree(tmp_path, job.branch)
+
+    class FailingSetup(ExistingWorkspace):
+        def run_setup(self, worktree, setup_script, validation_user):
+            now = utcnow()
+            return ValidationResult(("bash", "setup.sh"), 1, now, now, "setup broke")
+
+    coordinator.workspaces = FailingSetup(worktree)
+
+    result = coordinator.run_claimed(_claim(store, config))
+
+    assert result.state == JobState.BLOCKED
+    assert result.phase == "setup-failed"
+    assert result.attempt == 0
+    assert provider.starts == []
+    assert store.validations(job.id)[0]["attempt"] == 0
+
+
+def test_provider_launch_failure_consumes_one_implementation_attempt(tmp_path):
+    snapshot = issue()
+    config = make_config(tmp_path)
+    store = Store(config.service.state_dir / "state.db")
+
+    class LaunchFailure(FakeProvider):
+        def start(self, worktree, prompt, job_id, *, read_only=False):
+            raise OpenHandsProviderError("ACP launch failed")
+
+    provider = LaunchFailure("codex")
+    coordinator = Coordinator(config, store, FakeGitHub([snapshot]), {"codex": provider})
+    job, _ = coordinator.enqueue(snapshot)
+    coordinator.workspaces = ExistingWorkspace(create_worktree(tmp_path, job.branch))
+
+    result = coordinator.run_claimed(_claim(store, config))
+
+    assert result.state == JobState.QUEUED
+    assert result.phase == "provider-tool-retry"
+    assert result.attempt == 1
+    assert result.conversation_id is None
+
+
+def test_unhealthy_provider_stops_without_consuming_or_looping_attempts(tmp_path):
+    snapshot = issue()
+    config = make_config(tmp_path)
+    store = Store(config.service.state_dir / "state.db")
+
+    class UnhealthyProvider(FakeProvider):
+        def health(self):
+            return False, "ACP endpoint unavailable"
+
+    provider = UnhealthyProvider("codex")
+    coordinator = Coordinator(config, store, FakeGitHub([snapshot]), {"codex": provider})
+    job, _ = coordinator.enqueue(snapshot)
+
+    result = coordinator.run_claimed(_claim(store, config))
+
+    assert result.state == JobState.NEEDS_GUIDANCE
+    assert result.phase == "provider-unhealthy"
+    assert result.attempt == 0
+    assert "agentctl doctor" in result.actionable_message
+    assert provider.starts == []
 
 
 def test_first_architecture_issue_can_bootstrap_repository_quality_gate(tmp_path):

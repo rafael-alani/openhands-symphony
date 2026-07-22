@@ -487,7 +487,7 @@ class Store:
             )
             connection.execute(
                 """
-                UPDATE jobs SET state=?, attempt=attempt+1, lease_owner=?, lease_expires_at=?,
+                UPDATE jobs SET state=?, lease_owner=?, lease_expires_at=?,
                     heartbeat_at=?, started_at=COALESCE(started_at, ?), updated_at=?, phase='preflight',
                     retry_requested=0, finished_at=NULL
                 WHERE id=?
@@ -499,6 +499,23 @@ class Store:
                 (job_id, now, json.dumps({"owner": owner, "expires_at": expires})),
             )
             return self._job(connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+
+    def begin_attempt(self, job_id: str) -> Job:
+        """Count an implementation attempt only after preflight and setup succeed."""
+        now = utcnow()
+        with self.transaction() as connection:
+            row = connection.execute("SELECT state, attempt FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                raise StoreError(f"unknown job: {job_id}")
+            if JobState(row["state"]) != JobState.RUNNING:
+                raise StoreError("an implementation attempt may only start for a running job")
+            attempt = int(row["attempt"]) + 1
+            connection.execute("UPDATE jobs SET attempt=?, updated_at=? WHERE id=?", (attempt, now, job_id))
+            connection.execute(
+                "INSERT INTO job_events(job_id, at, kind, detail_json) VALUES (?, ?, 'attempt-started', ?)",
+                (job_id, now, json.dumps({"attempt": attempt})),
+            )
+            return self._job(connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())  # type: ignore[return-value]
 
     def renew_lease(self, job_id: str, owner: str, lease_seconds: int) -> bool:
         now_dt = datetime.now(UTC)
@@ -554,9 +571,16 @@ class Store:
                 connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
             assignments = ", ".join(f"{key}=?" for key in fields)
             connection.execute(f"UPDATE jobs SET {assignments} WHERE id=?", (*fields.values(), job_id))
+            event_detail: dict[str, Any] = {"from": str(current), "to": str(new_state), "phase": phase}
+            if actionable_message is not None:
+                event_detail["actionable_message"] = actionable_message
+            if terminal_reason is not None:
+                event_detail["terminal_reason"] = terminal_reason
+            if validation_summary is not None:
+                event_detail["validation_summary"] = validation_summary
             connection.execute(
                 "INSERT INTO job_events(job_id, at, kind, detail_json) VALUES (?, ?, 'transition', ?)",
-                (job_id, now, json.dumps({"from": str(current), "to": str(new_state), "phase": phase})),
+                (job_id, now, json.dumps(event_detail, sort_keys=True)),
             )
             return self._job(connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())  # type: ignore[return-value]
 
@@ -603,6 +627,7 @@ class Store:
                 return None
             job_id = str(row["id"])
             state = JobState(row["state"])
+            reset_pre_provider_attempts = False
             if command == "cancel":
                 connection.execute("UPDATE jobs SET cancel_requested=1, updated_at=? WHERE id=?", (now, job_id))
                 if state not in ACTIVE_STATES:
@@ -636,19 +661,52 @@ class Store:
                     state in {JobState.NEEDS_GUIDANCE, JobState.BLOCKED, JobState.FAILED, JobState.CANCELED}
                     or retryable_review
                 ):
+                    has_attempt_events = (
+                        connection.execute(
+                            "SELECT 1 FROM job_events WHERE job_id=? AND kind='attempt-started' LIMIT 1",
+                            (job_id,),
+                        ).fetchone()
+                        is not None
+                    )
+                    has_legacy_setup_failure = (
+                        connection.execute(
+                            """
+                            SELECT 1 FROM job_events
+                            WHERE job_id=? AND kind='transition' AND detail_json LIKE '%setup-failed%'
+                            LIMIT 1
+                            """,
+                            (job_id,),
+                        ).fetchone()
+                        is not None
+                    )
+                    reset_pre_provider_attempts = (
+                        row["conversation_id"] is None
+                        and int(row["attempt"]) > 0
+                        and not has_attempt_events
+                        and has_legacy_setup_failure
+                    )
                     connection.execute(
                         """
                         UPDATE jobs SET state=?, phase='explicit-requeue', retry_requested=1,
                             cancel_requested=0, pause_requested=0, actionable_message='', terminal_outcome=NULL,
-                            terminal_reason=NULL, finished_at=NULL, updated_at=? WHERE id=?
+                            terminal_reason=NULL, finished_at=NULL,
+                            attempt=CASE WHEN ? THEN 0 ELSE attempt END,
+                            updated_at=? WHERE id=?
                         """,
-                        (JobState.QUEUED, now, job_id),
+                        (JobState.QUEUED, int(reset_pre_provider_attempts), now, job_id),
                     )
             else:
                 raise StoreError(f"unknown control command: {command}")
             connection.execute(
                 "INSERT INTO job_events(job_id, at, kind, detail_json) VALUES (?, ?, 'control', ?)",
-                (job_id, now, json.dumps({"command": command})),
+                (
+                    job_id,
+                    now,
+                    json.dumps(
+                        {"command": command, "reset_pre_provider_attempts": reset_pre_provider_attempts},
+                        sort_keys=True,
+                    ),
+                ),
             )
             return self._job(connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
 

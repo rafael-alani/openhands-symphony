@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from conftest import issue
@@ -117,3 +118,78 @@ def test_operation_lock_is_durable_and_exclusive(tmp_path):
     assert not second.acquire_operation_lock("status:job", "worker-b", 60)
     first.release_operation_lock("status:job", "worker-a")
     assert second.acquire_operation_lock("status:job", "worker-b", 60)
+
+
+def test_claim_does_not_count_an_attempt_until_provider_work_begins(tmp_path):
+    store = Store(tmp_path / "state.db")
+    original = _add(store, issue())
+
+    claimed = store.claim_next("worker-a", 60, 2, {"codex": 2})
+
+    assert claimed and claimed.id == original.id
+    assert claimed.attempt == 0
+    started = store.begin_attempt(claimed.id)
+    assert started.attempt == 1
+    assert [event["kind"] for event in store.events(original.id)][-2:] == ["claimed", "attempt-started"]
+
+
+def test_retry_resets_attempts_polluted_by_legacy_setup_failure(tmp_path):
+    store = Store(tmp_path / "state.db")
+    original = _add(store, issue())
+    claimed = store.claim_next("worker-a", 60, 2, {"codex": 2})
+    assert claimed
+    store.transition(
+        claimed.id,
+        JobState.BLOCKED,
+        phase="setup-failed",
+        terminal_reason="legacy setup wrapper failed",
+    )
+    with store.transaction() as connection:
+        connection.execute("UPDATE jobs SET attempt=4 WHERE id=?", (original.id,))
+
+    retried = store.request_control(original.repository, original.issue_number, "retry")
+
+    assert retried and retried.state == JobState.QUEUED
+    assert retried.attempt == 0
+    detail = json.loads(store.events(original.id)[-1]["detail_json"])
+    assert detail["reset_pre_provider_attempts"] is True
+
+
+def test_retry_preserves_real_provider_attempts(tmp_path):
+    store = Store(tmp_path / "state.db")
+    original = _add(store, issue())
+    claimed = store.claim_next("worker-a", 60, 2, {"codex": 2})
+    assert claimed
+    started = store.begin_attempt(claimed.id)
+    store.transition(
+        started.id,
+        JobState.FAILED,
+        phase="provider-tool-failure",
+        terminal_reason="provider launch failed",
+    )
+
+    retried = store.request_control(original.repository, original.issue_number, "retry")
+
+    assert retried and retried.attempt == 1
+    detail = json.loads(store.events(original.id)[-1]["detail_json"])
+    assert detail["reset_pre_provider_attempts"] is False
+
+
+def test_transition_event_preserves_failure_detail(tmp_path):
+    store = Store(tmp_path / "state.db")
+    original = _add(store, issue())
+
+    failed = store.transition(
+        original.id,
+        JobState.FAILED,
+        phase="orchestrator-failure",
+        actionable_message="inspect the service",
+        terminal_reason="exact root cause",
+        validation_summary="validation did not run",
+    )
+
+    assert failed.state == JobState.FAILED
+    detail = json.loads(store.events(original.id)[-1]["detail_json"])
+    assert detail["actionable_message"] == "inspect the service"
+    assert detail["terminal_reason"] == "exact root cause"
+    assert detail["validation_summary"] == "validation did not run"

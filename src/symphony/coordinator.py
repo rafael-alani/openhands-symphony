@@ -723,15 +723,6 @@ class Coordinator:
                 )
                 return self._finish(job)
             self._sync_status(job)
-            if job.attempt > self.config.scheduler.max_attempts:
-                job = self.store.transition(
-                    job.id,
-                    JobState.FAILED,
-                    phase="retry-limit",
-                    terminal_reason=f"Maximum of {self.config.scheduler.max_attempts} attempts reached.",
-                )
-                return self._finish(job)
-
             existing_pr = self.github.find_open_pr(job.repository, job.branch)
             if existing_pr:
                 job = self.store.update_job(job.id, pr_number=existing_pr.number, pr_url=existing_pr.url)
@@ -781,7 +772,26 @@ class Coordinator:
                 )
                 return self._finish(job)
             if not healthy:
-                raise OpenHandsProviderError(health_detail)
+                job = self.store.transition(
+                    job.id,
+                    JobState.NEEDS_GUIDANCE,
+                    phase="provider-unhealthy",
+                    actionable_message=(
+                        f"{job.implementation_provider} is not healthy; fix the provider service, run "
+                        f"`agentctl doctor`, then use /agent retry: {redact(health_detail, 2000)}"
+                    ),
+                )
+                return self._finish(job)
+            if job.attempt >= self.config.scheduler.max_attempts:
+                job = self.store.transition(
+                    job.id,
+                    JobState.FAILED,
+                    phase="retry-limit",
+                    terminal_reason=(
+                        f"Maximum of {self.config.scheduler.max_attempts} implementation attempts reached."
+                    ),
+                )
+                return self._finish(job)
 
             worktree = self.workspaces.checkout(job, live)
             job = self.store.update_job(job.id, worktree=str(worktree), phase="setup")
@@ -804,6 +814,8 @@ class Coordinator:
                     )
                     return self._finish(job)
             self.workspaces.verify_integrity(job, worktree)
+            job = self.store.begin_attempt(job.id)
+            self._sync_status(job)
             prompt = implementation_prompt(
                 job,
                 self.config.service.global_agent_instruction,

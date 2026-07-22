@@ -68,6 +68,16 @@ def _authenticate_provider(provider: str) -> int:
     if provider == "antigravity" and (cpu_error := _antigravity_cpu_error()):
         print(cpu_error, file=sys.stderr)
         return 2
+    status = _run_interactive(verify_commands[provider], environment=environment)
+    if status == 0:
+        if provider == "github":
+            status = _run_interactive(["gh", "auth", "setup-git"], environment=environment)
+            if status:
+                return status
+        else:
+            _write_auth_marker(provider)
+        print(f"{provider} is already authenticated; no login needed")
+        return 0
     if provider == "antigravity":
         print(
             "Antigravity SSH login: open the printed authorization URL in your local browser, then paste only "
@@ -81,6 +91,12 @@ def _authenticate_provider(provider: str) -> int:
         return status
     if provider == "github":
         return _run_interactive(["gh", "auth", "setup-git"], environment=environment)
+    _write_auth_marker(provider)
+    print(f"{provider} subscription authentication verified with the official CLI")
+    return 0
+
+
+def _write_auth_marker(provider: str) -> None:
     marker_dir = Path(os.environ.get("SYMPHONY_AUTH_MARKER_DIR", "/var/lib/openhands-auth-status"))
     marker_dir.mkdir(parents=True, exist_ok=True)
     marker = marker_dir / f"{provider}.json"
@@ -96,8 +112,6 @@ def _authenticate_provider(provider: str) -> int:
         + "\n"
     )
     marker.chmod(0o640)
-    print(f"{provider} subscription authentication verified with the official CLI")
-    return 0
 
 
 def _parse_item(value: str) -> tuple[str, int]:

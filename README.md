@@ -47,6 +47,8 @@ sudo -iu openhands-symphony agentctl doctor
 sudo -iu openhands-symphony agentctl status
 ```
 
+Each `agentctl auth` command checks the provider's official login status first. If that account is already authenticated, it reports that no login is needed and does not start OAuth, so this block is safe to repeat after an installer rerun.
+
 Antigravity is disabled by default. Do not authenticate or probe it unless you explicitly enable it after verifying that the VM CPU exposes the instruction-set features required by its official binary.
 Its official executable is `agy`, not `antigravity`. For an optional worker-account login, `agentctl auth antigravity` forces the remote SSH URL/code flow even though `sudo -iu` removes the original SSH environment: open the printed URL locally, then paste only the alphanumeric code displayed by the browser back into the terminal.
 

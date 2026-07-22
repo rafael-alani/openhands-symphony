@@ -54,10 +54,10 @@ def validation_argv(command: tuple[str, ...], run_as_user: str) -> list[str]:
         f"HOME=/var/lib/{run_as_user}",
         "PATH=/opt/browser-use/bin:/usr/local/bin:/usr/bin:/bin",
         "CI=true",
-        "/usr/bin/setpriv",
-        "--umask",
-        "0007",
-        "--",
+        "/bin/sh",
+        "-c",
+        'umask 0007; exec "$@"',
+        "symphony-validation",
         *command,
     ]
 
@@ -195,9 +195,13 @@ class WorkspaceManager:
         return worktree
 
     def run_setup(self, worktree: Path, setup_script: str, validation_user: str) -> ValidationResult | None:
+        if not setup_script:
+            return None
         script = self._inside_script(worktree, setup_script)
         if not script.exists():
             return None
+        if not script.is_file():
+            raise WorkspaceError(f"setup script is not a regular file: {script}")
         return run_validation(("bash", str(script)), worktree, 1800, run_as_user=validation_user)
 
     def prepare_for_agent(self, worktree: Path) -> None:

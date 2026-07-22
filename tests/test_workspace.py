@@ -66,4 +66,20 @@ def test_validation_uses_clean_lower_authority_process_boundary():
     assert argv[:7] == ["sudo", "-n", "-H", "-u", "openhands-validator", "--", "env"]
     assert "-i" in argv
     assert argv[-3:] == ["python3", "-m", "pytest"]
-    assert "--umask" in argv
+    assert "/usr/bin/setpriv" not in argv
+    assert argv[-7:-3] == ["/bin/sh", "-c", 'umask 0007; exec "$@"', "symphony-validation"]
+
+
+def test_empty_setup_script_is_disabled(tmp_path):
+    manager = WorkspaceManager(tmp_path)
+
+    assert manager.run_setup(tmp_path, "", "openhands-validator") is None
+
+
+def test_setup_script_must_be_a_regular_file(tmp_path):
+    manager = WorkspaceManager(tmp_path)
+    setup_directory = tmp_path / ".openhands"
+    setup_directory.mkdir()
+
+    with pytest.raises(WorkspaceError, match="setup script is not a regular file"):
+        manager.run_setup(tmp_path, ".openhands", "openhands-validator")

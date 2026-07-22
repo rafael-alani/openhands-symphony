@@ -12,6 +12,17 @@ Unexpired leases are not stolen. For an expired lease, reconciliation identifies
 
 Reconciliation also scans trusted repository issue comments for exact `/agent` commands. Each command is durably coalesced by GitHub comment ID across the webhook and timer processes, recovering operator controls missed during VM downtime.
 
+## Inspect a failed run
+
+The canonical GitHub comment includes the durable run ID. Use it to read the redacted human-readable report on the VM before retrying:
+
+```bash
+sudo sed -n '1,240p' /var/lib/openhands-symphony/reports/RUN_ID/run.md
+sudo jq '.validations' /var/lib/openhands-symphony/reports/RUN_ID/run.json
+```
+
+The Markdown report includes each setup or validation command, exit status, timeout status, and retained output. The JSON report also includes the job event history. For surrounding service events, use `sudo agentctl logs` or query `openhands-symphony.service` with `journalctl`. Correct the reported cause and deploy any Symphony update before posting `/agent retry`; retrying an unchanged setup failure consumes another bounded attempt.
+
 ## Backup
 
 Stop the stack for the simplest consistent filesystem backup:

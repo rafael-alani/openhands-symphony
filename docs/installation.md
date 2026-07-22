@@ -74,4 +74,4 @@ In particular, `git pull` alone does not replace `/usr/local/bin/agentctl`: that
 ssh -L 8000:127.0.0.1:8000 -L 8787:127.0.0.1:8787 your-vm
 ```
 
-Open Canvas at `http://127.0.0.1:8000`. A GitHub webhook cannot reach loopback directly; either expose only `/webhooks/github` through a narrow HTTPS ingress or rely on five-minute reconciliation. Tailscale requires an explicit interface-specific nftables exception because non-loopback access is blocked by default. Never expose all of Canvas.
+Open Canvas at `http://127.0.0.1:8000`. On first launch, choose Codex (recommended after its authentication check passes) or Claude Code as the default for manual conversations. The choice does not affect Symphony provider routing; see the [Canvas operator guide](canvas.md). A GitHub webhook cannot reach loopback directly; either expose only `/webhooks/github` through a narrow HTTPS ingress or rely on five-minute reconciliation. Tailscale requires an explicit interface-specific nftables exception because non-loopback access is blocked by default. Never expose all of Canvas.

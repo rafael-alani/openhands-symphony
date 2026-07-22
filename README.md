@@ -72,6 +72,10 @@ ssh -L 8000:127.0.0.1:8000 your-vm
 
 Then open `http://127.0.0.1:8000`. Tailscale is a good alternative after adding a narrow `tailscale0` exception to the installed nftables table. Do not expose Canvas or Symphony directly to the public internet.
 
+On Canvas's first-run agent screen, choose **Codex** for the simplest default on a VM where `agentctl auth codex` has passed. **Claude Code** is equally valid after `agentctl auth claude` passes. This choice applies only to conversations you start manually in Canvas and can be changed later. It does not select the provider for Symphony jobs: the issue's `agent:claude`, `agent:codex`, or `agent:antigravity` label does that, and Symphony supplies explicit ACP settings when it creates a conversation.
+
+Do not choose **OpenHands** unless you separately configure a supported model/API-key profile. Do not choose **Gemini CLI** as a substitute for Antigravity; they are different agents, and the installed `agy` bridge is selected only by `agent:antigravity`. See the [Canvas operator guide](docs/canvas.md) for what the web interface is—and is not—responsible for.
+
 ## Resource sizing
 
 | Workload | Minimum | Recommended |
@@ -86,6 +90,7 @@ The OpenHands single-user baseline is smaller; these allocations include agent C
 
 - [Architecture](docs/architecture.md)
 - [Installation and operations](docs/installation.md)
+- [Canvas operator guide](docs/canvas.md)
 - [State machine](docs/state-machine.md)
 - [GitHub and label contract](docs/github-contract.md)
 - [Provider adapter contract and support matrix](docs/providers.md)

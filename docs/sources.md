@@ -12,6 +12,7 @@ These are the upstream interfaces checked on 2026-07-16. Version-specific behavi
 
 ## OpenHands
 
+- [OpenHands Agent Canvas](https://github.com/OpenHands/agent-canvas): upstream describes Canvas as the web interface for prompting agents manually and running them through schedules or external triggers. Symphony uses its UI and Agent Server but owns issue scheduling separately.
 - [ACP Agent](https://docs.openhands.dev/sdk/guides/agent-acp): OpenHands can delegate a conversation to an ACP server. The ACP server owns its tools and authentication; `mcp_config` is not supported on `ACPAgent`, so any provider-side MCP server must be configured by that provider.
 - [OpenHands MCP settings](https://docs.openhands.dev/openhands/usage/settings/mcp-settings): Agent Canvas/OpenHands has MCP client support for non-ACP profiles. Symphony leaves this configuration empty by default because neither GitHub nor Browser Use MCP improves the security/billing properties of this workflow.
 - [OpenHands automated code review ACP backend](https://docs.openhands.dev/openhands/usage/use-cases/code-review): documents authenticated ACP CLIs on trusted self-hosted runners and the Codex device-login/status flow.

@@ -35,3 +35,5 @@ Browser Use's current local MCP documentation requires an `OPENAI_API_KEY` (or a
 Browser Harness telemetry and Browser Use cloud sync are disabled in the worker environment. The pinned CLI may still perform a daily best-effort PyPI version check, but it cannot self-update the root-owned installation; upgrades remain an explicit `versions.env`/`agentctl update` operation.
 
 Headless Chromium requires RAM and shared-memory headroom. URL/tool policy is not an egress firewall: enforce hard domain restrictions with VM DNS, proxy, or firewall rules. Keep downloads below the private browser state or the assigned worktree, and never report cookies, local storage, or credential exports.
+
+Ubuntu restricts unprivileged user namespaces for downloaded Chromium builds. The installer loads a root-owned AppArmor profile scoped to `/opt/browser-use/chromium/**/chrome`, allowing the pinned Playwright build to create Chromium's own namespace/seccomp sandbox. It does not disable the restriction globally and does not launch Chromium with `--no-sandbox`.

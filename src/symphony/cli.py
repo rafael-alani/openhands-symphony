@@ -124,11 +124,26 @@ def _parse_item(value: str) -> tuple[str, int]:
 
 
 def _systemctl(action: str) -> int:
-    if action == "start" and _run_interactive(
-        ["systemctl", "is-active", "--quiet", "openhands-symphony.target"]
-    ) == 0:
-        print("openhands-symphony.target is already active; no start needed")
-        return 0
+    if action == "start":
+        target = "openhands-symphony.target"
+        target_active = _run_interactive(["systemctl", "is-active", "--quiet", target]) == 0
+        if target_active:
+            required_units = (
+                "openhands-symphony-firewall.service",
+                "openhands-agent-dbus.service",
+                "openhands-agent-keyring.service",
+                "openhands-browser.service",
+                "openhands-canvas.service",
+                "openhands-symphony.service",
+                "openhands-symphony-reconcile.timer",
+            )
+            if all(
+                _run_interactive(["systemctl", "is-active", "--quiet", unit]) == 0 for unit in required_units
+            ):
+                print("openhands-symphony stack is already active; no start needed")
+                return 0
+            print("openhands-symphony target is active but a required unit is not; restarting the stack")
+            return _run_interactive(["systemctl", "restart", target])
     return _run_interactive(["systemctl", action, "openhands-symphony.target"])
 
 

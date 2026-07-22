@@ -30,6 +30,7 @@ Agent Canvas 1.4.0 and Agent Server 1.35.0 package/API behavior was inspected an
 
 - [Browser Use CLI](https://docs.browser-use.com/open-source/browser-use-cli): documents local direct browser commands, managed Chromium installation, `browser-use doctor`, persistent sessions, and `BROWSER_USE_HOME`.
 - [Browser Harness connection reference](https://github.com/browser-use/browser-harness/blob/main/install.md): documents the `browser-harness` heredoc/helper interface and loopback `BU_CDP_URL` connection used by the worker prompt.
+- [Chromium AppArmor user-namespace guidance](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md): documents Ubuntu's restriction on downloaded Chromium builds and the narrow per-build AppArmor profile used instead of disabling Chromium's sandbox.
 - [Browser Use local MCP server](https://docs.browser-use.com/open-source/customize/integrations/mcp-server): the local MCP server requires an OpenAI or alternative model API key. Symphony therefore does not register it in the subscription-only default.
 
 No upstream statement is used to claim that a provider is authenticated on a particular VM. `agentctl auth`, `agentctl doctor`, the capability spike, and the retained GitHub smoke artifacts are the deployment evidence.

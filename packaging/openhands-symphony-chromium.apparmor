@@ -1,0 +1,9 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# Ubuntu restricts unprivileged user namespaces for downloaded Chromium builds.
+# This root-owned directory contains only the Playwright version pinned by the
+# installer, so allow that binary to create its own namespace/seccomp sandbox.
+profile openhands-symphony-chromium /opt/browser-use/chromium/**/chrome flags=(unconfined) {
+  userns,
+}

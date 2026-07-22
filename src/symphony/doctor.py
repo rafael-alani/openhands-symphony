@@ -216,6 +216,15 @@ def _browser_cdp(expected: str) -> Check:
         return Check("headless Chromium CDP", False, str(exc))
 
 
+def _service_failure_detail(service: str, state: str) -> str:
+    if state == "active":
+        return state
+    status, output = _run(["journalctl", "-u", service, "--no-pager", "-n", "8"])
+    if output:
+        return f"state={state or 'unknown'}; recent journal: {output}"
+    return f"state={state or 'unknown'}; journal unavailable (exit {status})"
+
+
 def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[Check]:
     versions = _version_manifest()
     keyring_status, keyring_output = _run(["systemctl", "is-active", "openhands-agent-keyring.service"])
@@ -284,7 +293,7 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
         Check(
             "private browser service",
             browser_status == 0 and browser_output == "active",
-            browser_output or "unknown",
+            _service_failure_detail("openhands-browser.service", browser_output),
         ),
         Check(
             "private-port firewall",

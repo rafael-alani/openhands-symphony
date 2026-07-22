@@ -43,7 +43,7 @@ fi
 apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git gnupg jq nftables openssl rsync sqlite3 xz-utils build-essential \
-  sudo \
+  sudo apparmor \
   python3 python3-venv libsecret-1-0 dbus-user-session dbus-x11 gnome-keyring
 
 install -d -m 0755 /etc/apt/keyrings
@@ -165,6 +165,12 @@ env UV_TOOL_DIR=/opt/browser-use/tools UV_TOOL_BIN_DIR=/opt/browser-use/bin \
 env PLAYWRIGHT_BROWSERS_PATH=/opt/browser-use/chromium \
   uvx --from "playwright==${PLAYWRIGHT_VERSION}" playwright install chromium --with-deps --no-shell
 chmod -R a+rX /opt/browser-use/chromium
+if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
+  install -o root -g root -m 0644 \
+    "${INSTALL_DIR}/packaging/openhands-symphony-chromium.apparmor" \
+    /etc/apparmor.d/openhands-symphony-chromium
+  apparmor_parser -r /etc/apparmor.d/openhands-symphony-chromium
+fi
 
 uv venv --clear --python "${PYTHON_VERSION}" /opt/antigravity-acp
 uv pip install --python /opt/antigravity-acp/bin/python "agent-client-protocol==${ACP_PYTHON_VERSION}"

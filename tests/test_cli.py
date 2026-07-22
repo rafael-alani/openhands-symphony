@@ -103,7 +103,16 @@ def test_start_skips_systemctl_start_when_target_is_already_active(monkeypatch, 
 
     assert cli._systemctl("start") == 0
 
-    assert commands == [["systemctl", "is-active", "--quiet", "openhands-symphony.target"]]
+    assert commands == [
+        ["systemctl", "is-active", "--quiet", "openhands-symphony.target"],
+        ["systemctl", "is-active", "--quiet", "openhands-symphony-firewall.service"],
+        ["systemctl", "is-active", "--quiet", "openhands-agent-dbus.service"],
+        ["systemctl", "is-active", "--quiet", "openhands-agent-keyring.service"],
+        ["systemctl", "is-active", "--quiet", "openhands-browser.service"],
+        ["systemctl", "is-active", "--quiet", "openhands-canvas.service"],
+        ["systemctl", "is-active", "--quiet", "openhands-symphony.service"],
+        ["systemctl", "is-active", "--quiet", "openhands-symphony-reconcile.timer"],
+    ]
     assert "already active; no start needed" in capsys.readouterr().out
 
 
@@ -122,6 +131,24 @@ def test_start_runs_systemctl_start_when_target_is_inactive(monkeypatch) -> None
         ["systemctl", "is-active", "--quiet", "openhands-symphony.target"],
         ["systemctl", "start", "openhands-symphony.target"],
     ]
+
+
+def test_start_restarts_active_target_when_a_required_unit_is_unhealthy(monkeypatch, capsys) -> None:
+    commands: list[list[str]] = []
+    statuses = iter([0, 0, 0, 0, 3, 0])
+    monkeypatch.setattr(
+        cli,
+        "_run_interactive",
+        lambda command, **_kwargs: commands.append(command) or next(statuses),
+    )
+
+    assert cli._systemctl("start") == 0
+
+    assert commands[-2:] == [
+        ["systemctl", "is-active", "--quiet", "openhands-browser.service"],
+        ["systemctl", "restart", "openhands-symphony.target"],
+    ]
+    assert "required unit is not; restarting" in capsys.readouterr().out
 
 
 def test_auth_runs_oauth_only_after_status_probe_fails(tmp_path, monkeypatch) -> None:

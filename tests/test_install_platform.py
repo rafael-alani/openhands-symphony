@@ -7,6 +7,7 @@ import pytest
 
 PLATFORM_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install_platform.sh"
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
+CHROMIUM_APPARMOR = Path(__file__).resolve().parents[1] / "packaging" / "openhands-symphony-chromium.apparmor"
 
 
 def _check_platform(distribution_id: str, version: str, pretty_name: str) -> subprocess.CompletedProcess[str]:
@@ -73,3 +74,12 @@ def test_installer_uses_release_neutral_python_and_playwright_dependencies() -> 
     assert "libcups2 " not in installer
     assert 'if [[ ! -x "/usr/local/bin/${installed_command}" ]]' in installer
     assert "Codex CLI: /usr/local/bin/codex" in installer
+    assert "apparmor_parser -r /etc/apparmor.d/openhands-symphony-chromium" in installer
+
+
+def test_chromium_apparmor_profile_narrowly_allows_the_pinned_browser_tree() -> None:
+    profile = CHROMIUM_APPARMOR.read_text()
+
+    assert "/opt/browser-use/chromium/**/chrome" in profile
+    assert "userns," in profile
+    assert "/**" not in profile.replace("/opt/browser-use/chromium/**/chrome", "")

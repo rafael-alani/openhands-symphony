@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import stat
 import subprocess
 import sys
@@ -9,6 +10,26 @@ import pytest
 from conftest import create_worktree
 
 from symphony.workspace import WorkspaceError, WorkspaceManager, validation_argv
+
+
+def test_workspace_parents_remain_agent_traversable_under_service_umask(tmp_path):
+    previous_umask = os.umask(0o077)
+    try:
+        manager = WorkspaceManager(tmp_path / "workspaces")
+    finally:
+        os.umask(previous_umask)
+
+    for directory in (manager.root, manager.root / "repositories", manager.root / "runs"):
+        mode = stat.S_IMODE(directory.stat().st_mode)
+        assert mode & stat.S_IXGRP
+        assert not mode & stat.S_IRGRP
+        assert not mode & stat.S_IWGRP
+
+    repository = manager.root / "repositories" / "solo--project"
+    repository.mkdir(mode=0o700)
+    repository.chmod(0o700)
+    manager._prepare_shared_parent(repository)
+    assert stat.S_IMODE(repository.stat().st_mode) & stat.S_IXGRP
 
 
 def test_wrapper_commit_disables_repository_controlled_git_hooks(tmp_path):

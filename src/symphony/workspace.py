@@ -97,12 +97,36 @@ class WorkspaceManager:
     def __post_init__(self) -> None:
         self.root = self.root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        # The orchestrator service deliberately runs with UMask=0077. Explicitly
+        # restore group traversal on the workspace root and structural
+        # directories that the lower-authority agent must cross to reach a
+        # prepared worktree and its read-only Git metadata.
+        self._prepare_shared_parent(self.root)
+        for name in ("repositories", "runs"):
+            directory = self.root / name
+            directory.mkdir(exist_ok=True)
+            self._prepare_shared_parent(directory)
 
     def _inside(self, path: Path) -> Path:
         resolved = path.resolve()
         if not resolved.is_relative_to(self.root):
             raise WorkspaceError(f"path escapes configured workspace root: {resolved}")
         return resolved
+
+    def _prepare_shared_parent(self, path: Path) -> None:
+        directory = self._inside(path)
+        info = directory.stat()
+        if not directory.is_dir() or info.st_uid != os.geteuid():
+            raise WorkspaceError(f"workspace parent has unexpected ownership or type: {directory}")
+        shared_gid = self.root.stat().st_gid
+        if info.st_gid != shared_gid:
+            try:
+                os.chown(directory, -1, shared_gid)
+            except PermissionError as exc:
+                raise WorkspaceError(f"cannot assign workspace parent to the shared group: {directory}") from exc
+        # Group members may traverse a known path but cannot list it or create
+        # sibling repositories/runs. setgid preserves the shared group below it.
+        directory.chmod(0o2710)
 
     @staticmethod
     def _repo_key(repository: str) -> str:
@@ -125,6 +149,7 @@ class WorkspaceManager:
                 timeout=900,
                 env=orchestrator_environment(),
             )
+        self._prepare_shared_parent(repository_dir)
         _run(
             ["git", "-C", str(repository_dir), "fetch", "--prune", "origin"],
             timeout=900,

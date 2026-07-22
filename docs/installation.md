@@ -2,7 +2,7 @@
 
 ## VM
 
-Use an Ubuntu 26.04 LTS Proxmox VM, not an LXC. Ubuntu 24.04 LTS remains supported as a fallback. Enable the QEMU guest agent, use VirtIO SCSI/network, and place workspaces on SSD-backed storage. For one agent, start with 6 vCPU, 16 GB RAM, and 80 GB disk; see the README for higher concurrency and Chromium tiers.
+Use an Ubuntu 26.04 LTS Proxmox VM, not an LXC. Ubuntu 24.04 LTS remains supported as a fallback. Enable **QEMU Guest Agent** in the Proxmox VM options (or run `qm set VMID --agent enabled=1` on the Proxmox host) and reboot the VM after the device is added; the installer installs the guest package and `doctor` reports a non-blocking warning when it is inactive. Use VirtIO SCSI/network and place workspaces on SSD-backed storage. For one agent, start with 6 vCPU, 16 GB RAM, and 80 GB disk; see the README for higher concurrency and Chromium tiers.
 
 ## Clean install
 
@@ -49,6 +49,25 @@ curl -fsS http://127.0.0.1:8787/healthz
 ```
 
 `doctor` must be run after start because it checks the pinned Agent Server over the authenticated localhost API.
+
+### Clean-machine regression gate
+
+Do not route a real issue until every required `doctor` row is `PASS`. The first VM exposed several installer/runtime integration failures that are now guarded explicitly:
+
+| Previously observed failure | Default prevention and verification |
+|---|---|
+| Ubuntu release-specific Python package/uv behavior | The installer accepts only tested Ubuntu LTS releases, uses release-neutral packages plus pinned uv-managed Python, and the platform tests reject other hosts. |
+| Proxmox reported no guest agent | The installer includes `qemu-guest-agent`; `doctor` warns when the Proxmox option/device is not active. Balloon minimum/maximum policy remains an explicit host setting. |
+| `git pull` left a stale installed `agentctl` | `agentctl update` force-refreshes the wheel and byte-compares installed Symphony Python sources with the checkout. |
+| Re-running authentication restarted OAuth | Every provider and GitHub runs its official status probe first; tests assert that a successful probe skips login. |
+| Browser Harness executable was absent | The installer exposes the pinned package's executables; `doctor` checks both executable and package version. |
+| Chromium failed under Ubuntu's user-namespace policy | A narrow AppArmor profile permits the pinned Chromium sandbox; the live CDP/version check proves startup without `--no-sandbox`. |
+| Chromium Crashpad aborted under the read-only service home | Profile plus XDG/Crashpad state live below the writable private browser directory; `doctor` checks the installed service environment and live CDP. |
+| An unhealthy browser left an apparently active target | `agentctl start` verifies every required unit and restarts an unhealthy target; `doctor` reports the failed unit and a privileged journal command when needed. |
+| Doctor crashed while probing an intentionally inaccessible worker credential | Permission denial is treated as expected account isolation and covered by a regression test. |
+| Empty `setup_script` ran the worktree directory; Ubuntu `setpriv` rejected `--umask` | Empty setup is now a no-op. `doctor` executes the exact production validator wrapper and verifies the lower-authority user, clean environment, and `0007` umask before any issue is accepted. |
+
+The repository test suite covers these static contracts, while `doctor` covers the installed VM. Retain the complete clean `doctor` output with the first disposable [end-to-end smoke test](smoke-test.md); local tests alone do not certify a machine.
 
 ## Operations
 

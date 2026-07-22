@@ -58,6 +58,7 @@ def test_installer_uses_release_neutral_python_and_playwright_dependencies() -> 
     installer = INSTALLER.read_text()
 
     assert "python3.12" not in installer
+    assert "qemu-guest-agent" in installer
     assert "UV_PYTHON_INSTALL_DIR=/opt/uv-python" in installer
     assert "UV_MANAGED_PYTHON=true" in installer
     assert 'uv python install "${PYTHON_VERSION}"' in installer
@@ -76,6 +77,7 @@ def test_installer_uses_release_neutral_python_and_playwright_dependencies() -> 
     assert "libcups2 " not in installer
     assert 'if [[ ! -x "/usr/local/bin/${installed_command}" ]]' in installer
     assert "Codex CLI: /usr/local/bin/codex" in installer
+    assert "Do not route a real issue until every required doctor row reports PASS." in installer
     assert "apparmor_parser -r /etc/apparmor.d/openhands-symphony-chromium" in installer
 
 

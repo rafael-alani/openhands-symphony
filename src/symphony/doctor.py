@@ -17,6 +17,7 @@ import httpx
 from .config import Config
 from .coordinator import Coordinator
 from .store import Store
+from .workspace import SENSITIVE_ENV, validation_argv
 
 
 @dataclass(frozen=True)
@@ -137,25 +138,34 @@ def _canvas_key_permissions(config: Config) -> Check:
 def _validator_boundary(config: Config) -> Check:
     if not config.service.validation_user:
         return Check("credential-free validation boundary", False, "service.validation_user is disabled")
-    status, output = _run(
-        [
-            "sudo",
-            "-n",
-            "-H",
-            "-u",
-            config.service.validation_user,
-            "--",
-            "env",
-            "-i",
-            f"HOME=/var/lib/{config.service.validation_user}",
-            "PATH=/usr/bin:/bin",
-            "true",
-        ]
+    user = config.service.validation_user
+    expected_home = f"/var/lib/{user}"
+    expected_path = "/opt/browser-use/bin:/usr/local/bin:/usr/bin:/bin"
+    probe = (
+        "/bin/sh",
+        "-c",
+        'printf "user=%s\\nhome=%s\\npath=%s\\nci=%s\\numask=%s\\n" '
+        '"$(id -un)" "$HOME" "$PATH" "$CI" "$(umask)"; /usr/bin/env',
     )
+    status, output = _run(validation_argv(probe, user))
+    expected = {
+        f"user={user}",
+        f"home={expected_home}",
+        f"path={expected_path}",
+        "ci=true",
+        "umask=0007",
+    }
+    output_lines = output.splitlines()
+    sensitive_exposed = any(line.startswith(f"{name}=") for name in SENSITIVE_ENV for line in output_lines)
+    ok = status == 0 and expected.issubset(set(output_lines)) and not sensitive_exposed
     return Check(
         "credential-free validation boundary",
-        status == 0,
-        output or f"sudo transition to {config.service.validation_user} succeeded",
+        ok,
+        (
+            f"exact setup/validation launch succeeded as {user}; clean environment; umask=0007"
+            if ok
+            else output or f"exact setup/validation launch failed with exit {status}"
+        ),
     )
 
 
@@ -169,6 +179,22 @@ def _workspace_permissions(config: Config) -> Check:
         "workspace confinement",
         stat.S_ISDIR(mode) and bool(mode & stat.S_ISGID) and group == "openhands-agents",
         f"path={config.service.workspace_dir}, group={group}, mode={oct(stat.S_IMODE(mode))}",
+    )
+
+
+def _empty_setup_behavior(config: Config, coordinator: Coordinator) -> Check:
+    try:
+        result = coordinator.workspaces.run_setup(
+            config.service.workspace_dir,
+            "",
+            config.service.validation_user,
+        )
+    except Exception as exc:
+        return Check("empty repository setup", False, str(exc))
+    return Check(
+        "empty repository setup",
+        result is None,
+        "setup_script='' is a no-op" if result is None else "empty setup unexpectedly executed a command",
     )
 
 
@@ -220,6 +246,11 @@ def _service_failure_detail(service: str, state: str) -> str:
     if state == "active":
         return state
     status, output = _run(["journalctl", "-u", service, "--no-pager", "-n", "8"])
+    if status != 0 and ("permission" in output.lower() or "no journal files were opened" in output.lower()):
+        return (
+            f"state={state or 'unknown'}; service account cannot read the system journal; run: "
+            f"sudo journalctl -u {service} -b -n 100 --no-pager -o cat"
+        )
     if output:
         return f"state={state or 'unknown'}; recent journal: {output}"
     return f"state={state or 'unknown'}; journal unavailable (exit {status})"
@@ -228,11 +259,24 @@ def _service_failure_detail(service: str, state: str) -> str:
 def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[Check]:
     versions = _version_manifest()
     keyring_status, keyring_output = _run(["systemctl", "is-active", "openhands-agent-keyring.service"])
+    guest_agent_status, guest_agent_output = _run(["systemctl", "is-active", "qemu-guest-agent.service"])
     browser_status, browser_output = _run(["systemctl", "is-active", "openhands-browser.service"])
     firewall_status, firewall_output = _run(["systemctl", "is-active", "openhands-symphony-firewall.service"])
     nft_status, nft_output = _run(["sudo", "-n", "/usr/sbin/nft", "list", "table", "inet", "openhands_symphony"])
     canvas_environment_status, canvas_environment = _run(
         ["systemctl", "show", "openhands-canvas.service", "--property=Environment"]
+    )
+    browser_environment_status, browser_environment = _run(
+        ["systemctl", "show", "openhands-browser.service", "--property=Environment"]
+    )
+    browser_state_values = (
+        "SYMPHONY_BROWSER_PROFILE=/var/lib/openhands-agent/browser/chromium-profile",
+        "XDG_CONFIG_HOME=/var/lib/openhands-agent/browser/xdg-config",
+        "XDG_CACHE_HOME=/var/lib/openhands-agent/browser/xdg-cache",
+        "XDG_DATA_HOME=/var/lib/openhands-agent/browser/xdg-data",
+    )
+    browser_state_ok = browser_environment_status == 0 and all(
+        value in browser_environment for value in browser_state_values
     )
     model_api_key_names = (
         "ANTHROPIC_API_KEY",
@@ -285,6 +329,17 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
         _canvas_key_permissions(config),
         _service_accounts(),
         _validator_boundary(config),
+        _empty_setup_behavior(config, coordinator),
+        Check(
+            "QEMU guest agent",
+            guest_agent_status == 0 and guest_agent_output == "active",
+            (
+                "active"
+                if guest_agent_status == 0 and guest_agent_output == "active"
+                else "inactive or unavailable; enable QEMU Guest Agent in the Proxmox VM options and reboot the VM"
+            ),
+            required=False,
+        ),
         Check(
             "worker Secret Service keyring",
             keyring_status == 0 and keyring_output == "active",
@@ -294,6 +349,15 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
             "private browser service",
             browser_status == 0 and browser_output == "active",
             _service_failure_detail("openhands-browser.service", browser_output),
+        ),
+        Check(
+            "private browser writable state",
+            browser_state_ok,
+            (
+                "Chromium profile and Crashpad/XDG state use the writable private browser directory"
+                if browser_state_ok
+                else browser_environment or "unable to read the installed browser service environment"
+            ),
         ),
         Check(
             "private-port firewall",

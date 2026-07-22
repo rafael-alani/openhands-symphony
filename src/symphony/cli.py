@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .config import load_config
 from .doctor import run_doctor
+from .models import Job
 from .runtime import build_coordinator, validate_operational_config
 
 
@@ -123,6 +124,16 @@ def _parse_item(value: str) -> tuple[str, int]:
     return repository, int(number)
 
 
+def _job_status_line(job: Job, report_dir: Path) -> str:
+    report = report_dir / job.id / "run.md"
+    return (
+        f"{job.repository}#{job.issue_number} state={job.state} provider={job.implementation_provider} "
+        f"attempt={job.attempt} phase={job.phase} run={job.id} "
+        f"conversation={job.conversation_id or '-'} review_conversation={job.review_conversation_id or '-'} "
+        f"pr={job.pr_url or '-'} report={report if report.is_file() else '-'}"
+    )
+
+
 def _systemctl(action: str) -> int:
     if action == "start":
         target = "openhands-symphony.target"
@@ -211,10 +222,7 @@ def main() -> None:
         jobs = store.list_jobs()
         print(f"jobs={len(jobs)}")
         for job in jobs:
-            print(
-                f"{job.repository}#{job.issue_number} state={job.state} provider={job.implementation_provider} "
-                f"attempt={job.attempt} run={job.id} pr={job.pr_url or '-'}"
-            )
+            print(_job_status_line(job, config.service.report_dir))
         raise SystemExit(0)
     if args.command == "reconcile":
         for repository, issue_number, result in coordinator.reconcile():

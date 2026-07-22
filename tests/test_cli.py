@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from symphony import cli
-from symphony.cli import _antigravity_cpu_error, _authentication_environment
+from symphony.cli import _antigravity_cpu_error, _authentication_environment, _job_status_line
 
 
 def test_antigravity_cpu_preflight_rejects_x86_vm_without_pclmulqdq() -> None:
@@ -168,3 +170,28 @@ def test_auth_runs_oauth_only_after_status_probe_fails(tmp_path, monkeypatch) ->
         ["/opt/provider-clis/node_modules/.bin/codex", "login", "--device-auth"],
         ["/opt/provider-clis/node_modules/.bin/codex", "login", "status"],
     ]
+
+
+def test_job_status_exposes_phase_conversation_and_report(tmp_path) -> None:
+    report = tmp_path / "run-123" / "run.md"
+    report.parent.mkdir()
+    report.write_text("# report\n")
+    job = SimpleNamespace(
+        repository="solo/project",
+        issue_number=21,
+        state="running",
+        implementation_provider="codex",
+        attempt=2,
+        phase="implementation",
+        id="run-123",
+        conversation_id="conversation-456",
+        review_conversation_id=None,
+        pr_url=None,
+    )
+
+    line = _job_status_line(job, tmp_path)
+
+    assert "phase=implementation" in line
+    assert "conversation=conversation-456" in line
+    assert "review_conversation=-" in line
+    assert f"report={report}" in line

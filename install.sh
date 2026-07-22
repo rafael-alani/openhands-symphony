@@ -43,7 +43,7 @@ fi
 apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git gnupg jq nftables openssl rsync sqlite3 xz-utils build-essential \
-  sudo apparmor \
+  sudo apparmor qemu-guest-agent \
   python3 python3-venv libsecret-1-0 dbus-user-session dbus-x11 gnome-keyring
 
 install -d -m 0755 /etc/apt/keyrings
@@ -267,4 +267,5 @@ echo "   sudo -iu ${SERVICE_USER} agentctl labels"
 echo "   sudo agentctl start"
 echo "   sudo -iu ${SERVICE_USER} agentctl doctor"
 echo "   sudo -iu ${SERVICE_USER} agentctl status"
+echo "   Do not route a real issue until every required doctor row reports PASS."
 echo "Non-loopback ingress to Canvas/webhook/CDP is blocked by nftables. Use an SSH tunnel by default."

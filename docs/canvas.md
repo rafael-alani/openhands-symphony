@@ -37,6 +37,27 @@ For a Symphony-managed job, use Canvas primarily as a viewer. Sending extra mess
 
 Canvas upstream also exposes automation features, but this installation does not use them for Symphony. Pinned Canvas 1.4.0 automations cannot select the required ACP agent profile, so creating a second Canvas schedule or trigger would duplicate Symphony's webhook/reconciliation scheduler without preserving its routing and safety guarantees.
 
+## Inspect an issue run
+
+Provider-private hidden chain-of-thought is not exposed and should not be treated as an audit record. Canvas may display provider-supplied reasoning summaries, but the reliable observable record is the accepted issue specification, agent messages, tool activity, workspace changes, validation output, and final response.
+
+Start with the durable job status:
+
+```bash
+sudo -iu openhands-symphony agentctl status
+```
+
+Each job line includes its current phase, run ID, implementation and review conversation IDs, PR, and report path. A `conversation=-` value means setup or preflight has not yet reached the provider; there is no agent work to inspect yet. Once a conversation ID exists, open Canvas through the SSH tunnel and select the matching conversation from its conversation list. Use Canvas as a viewer for Symphony-managed runs; do not send messages or change its execution state there.
+
+The isolated worktree is `/var/lib/openhands-symphony/workspaces/runs/RUN_ID`. To inspect changes without modifying them:
+
+```bash
+sudo -iu openhands-symphony git -C /var/lib/openhands-symphony/workspaces/runs/RUN_ID status --short
+sudo -iu openhands-symphony git -C /var/lib/openhands-symphony/workspaces/runs/RUN_ID diff
+```
+
+After setup, validation, or a terminal transition writes a report, inspect the command evidence under `/var/lib/openhands-symphony/reports/RUN_ID/`; see [Recovery](recovery.md#inspect-a-failed-run). GitHub remains authoritative for pausing, resuming, retrying, or cancelling the job.
+
 ## Access
 
 Keep the SSH session open:

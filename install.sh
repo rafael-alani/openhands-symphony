@@ -147,7 +147,16 @@ npm install --prefix /opt/provider-clis --omit=dev --no-audit --no-fund \
 
 uv venv --clear --python "${PYTHON_VERSION}" /opt/openhands-symphony-tool
 env UV_PROJECT_ENVIRONMENT=/opt/openhands-symphony-tool \
-  uv sync --locked --no-dev --no-editable --project "${INSTALL_DIR}"
+  uv sync --locked --no-dev --no-editable --reinstall-package "${PROJECT_NAME}" --project "${INSTALL_DIR}"
+INSTALLED_SYMPHONY_DIR="$(/opt/openhands-symphony-tool/bin/python -c \
+  'from pathlib import Path; import symphony; print(Path(symphony.__file__).resolve().parent)')"
+while IFS= read -r source_file; do
+  relative_file="${source_file#"${INSTALL_DIR}/src/symphony/"}"
+  if ! cmp -s "${source_file}" "${INSTALLED_SYMPHONY_DIR}/${relative_file}"; then
+    echo "Installation failed: installed Symphony package is stale at ${relative_file}" >&2
+    exit 1
+  fi
+done < <(find "${INSTALL_DIR}/src/symphony" -type f -name '*.py' -print)
 env UV_TOOL_DIR=/opt/browser-use/tools UV_TOOL_BIN_DIR=/opt/browser-use/bin \
   uv tool install --force --python "${PYTHON_VERSION}" \
   --with-executables-from "browser-harness==${BROWSER_HARNESS_VERSION}" \

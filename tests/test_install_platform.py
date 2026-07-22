@@ -61,7 +61,12 @@ def test_installer_uses_release_neutral_python_and_playwright_dependencies() -> 
     assert installer.count('--python "${PYTHON_VERSION}"') == 3
     assert "uv tool install --force --locked" not in installer
     assert "UV_PROJECT_ENVIRONMENT=/opt/openhands-symphony-tool" in installer
-    assert 'uv sync --locked --no-dev --no-editable --project "${INSTALL_DIR}"' in installer
+    assert (
+        'uv sync --locked --no-dev --no-editable --reinstall-package "${PROJECT_NAME}" --project "${INSTALL_DIR}"'
+        in installer
+    )
+    assert 'cmp -s "${source_file}" "${INSTALLED_SYMPHONY_DIR}/${relative_file}"' in installer
+    assert "installed Symphony package is stale" in installer
     assert '--with-executables-from "browser-harness==${BROWSER_HARNESS_VERSION}"' in installer
     assert "playwright install chromium --with-deps --no-shell" in installer
     assert "libatk1.0-0 " not in installer

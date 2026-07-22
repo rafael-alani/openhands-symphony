@@ -41,7 +41,7 @@ git pull origin main
 sudo agentctl update
 ```
 
-`agentctl update` reruns the installer from the recorded source checkout while preserving configuration and credentials. Running `sudo ./install.sh --update` from the checkout is equivalent.
+`agentctl update` reruns the installer from the recorded source checkout while preserving configuration and credentials. Running `sudo ./install.sh --update` from the checkout is equivalent. The installer force-refreshes the local `openhands-symphony` wheel and verifies every installed Python source file, so an unchanged project version cannot leave stale CLI code behind.
 
 After replacing `CHANGE_ME/CHANGE_ME` in the config:
 

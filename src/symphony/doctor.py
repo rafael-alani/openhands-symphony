@@ -182,6 +182,97 @@ def _workspace_permissions(config: Config) -> Check:
     )
 
 
+def _identity_has_permissions(path: Path, uid: int, gids: set[int], required: int) -> tuple[bool, str]:
+    """Evaluate normal Unix mode access for another local identity without impersonating it."""
+    try:
+        target = path.resolve(strict=True)
+        for parent in reversed(target.parents):
+            info = parent.stat()
+            mode = stat.S_IMODE(info.st_mode)
+            granted = (mode >> 6) & 0o7 if info.st_uid == uid else ((mode >> 3) & 0o7 if info.st_gid in gids else mode & 0o7)
+            if not granted & stat.S_IXOTH:
+                return False, f"cannot traverse {parent}: uid={info.st_uid}, gid={info.st_gid}, mode={oct(mode)}"
+        info = target.stat()
+        mode = stat.S_IMODE(info.st_mode)
+        granted = (mode >> 6) & 0o7 if info.st_uid == uid else ((mode >> 3) & 0o7 if info.st_gid in gids else mode & 0o7)
+        if granted & required != required:
+            return (
+                False,
+                f"insufficient access to {target}: required={oct(required)}, uid={info.st_uid}, "
+                f"gid={info.st_gid}, mode={oct(mode)}",
+            )
+        return True, str(target)
+    except OSError as exc:
+        return False, f"cannot inspect {path}: {exc}"
+
+
+def _agent_worktree_permissions(config: Config, store: Store) -> Check:
+    try:
+        worker = pwd.getpwnam("openhands-agent")
+        worker_gids = set(os.getgrouplist(worker.pw_name, worker.pw_gid))
+        root = config.service.workspace_dir.resolve(strict=True)
+        runs = (root / "runs").resolve(strict=True)
+    except (KeyError, OSError) as exc:
+        return Check("agent worktree access", False, str(exc))
+
+    structural_ok, structural_detail = _identity_has_permissions(runs, worker.pw_uid, worker_gids, 0o1)
+    if not structural_ok:
+        return Check("agent worktree access", False, structural_detail)
+
+    candidates: set[Path] = set()
+    for job in store.list_jobs():
+        if job.worktree:
+            candidates.add(Path(job.worktree))
+    try:
+        candidates.update(path for path in runs.iterdir() if path.is_dir())
+    except OSError as exc:
+        return Check("agent worktree access", False, f"cannot enumerate persisted worktrees: {exc}")
+
+    inspected = 0
+    for candidate in sorted(candidates):
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError as exc:
+            return Check("agent worktree access", False, f"cannot inspect persisted worktree {candidate}: {exc}")
+        if not resolved.is_relative_to(runs):
+            return Check("agent worktree access", False, f"persisted worktree escapes runs directory: {resolved}")
+        ok, detail = _identity_has_permissions(resolved, worker.pw_uid, worker_gids, 0o7)
+        if not ok:
+            return Check("agent worktree access", False, detail)
+        dot_git = resolved / ".git"
+        if dot_git.exists():
+            ok, detail = _identity_has_permissions(dot_git, worker.pw_uid, worker_gids, 0o4)
+            if not ok:
+                return Check("agent worktree access", False, detail)
+            try:
+                match = re.fullmatch(r"gitdir:\s*(.+)\s*", dot_git.read_text(errors="replace"))
+                if not match:
+                    return Check("agent worktree access", False, f"invalid worktree pointer: {dot_git}")
+                git_dir = Path(match.group(1)).resolve(strict=True)
+                repository_root = (root / "repositories").resolve(strict=True)
+                if not git_dir.is_relative_to(repository_root):
+                    return Check("agent worktree access", False, f"Git metadata escapes workspace: {git_dir}")
+                common_git_dir = git_dir.parent.parent
+                for metadata_path in (common_git_dir, git_dir):
+                    ok, detail = _identity_has_permissions(
+                        metadata_path,
+                        worker.pw_uid,
+                        worker_gids,
+                        0o5,
+                    )
+                    if not ok:
+                        return Check("agent worktree access", False, detail)
+            except OSError as exc:
+                return Check("agent worktree access", False, f"cannot inspect Git metadata for {resolved}: {exc}")
+        inspected += 1
+    detail = (
+        f"openhands-agent can traverse the private state parent and read/write {inspected} persisted worktree(s)"
+        if inspected
+        else "openhands-agent can traverse the private state parent; no persisted worktree exists yet"
+    )
+    return Check("agent worktree access", True, detail)
+
+
 def _empty_setup_behavior(config: Config, coordinator: Coordinator) -> Check:
     try:
         result = coordinator.workspaces.run_setup(
@@ -370,6 +461,7 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
             else nft_output or firewall_output or "unknown",
         ),
         _workspace_permissions(config),
+        _agent_worktree_permissions(config, store),
         _command_check("git", "git"),
         _command_check("GitHub CLI", "gh"),
         _command_check("Browser Use", "/opt/browser-use/bin/browser-use"),

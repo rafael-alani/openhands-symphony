@@ -160,7 +160,11 @@ def test_retry_preserves_real_provider_attempts(tmp_path):
     original = _add(store, issue())
     claimed = store.claim_next("worker-a", 60, 2, {"codex": 2})
     assert claimed
-    started = store.begin_attempt(claimed.id)
+    started = store.begin_attempt(
+        claimed.id,
+        conversation_id="conversation-1",
+        session_id="session-1",
+    )
     store.transition(
         started.id,
         JobState.FAILED,
@@ -171,8 +175,53 @@ def test_retry_preserves_real_provider_attempts(tmp_path):
     retried = store.request_control(original.repository, original.issue_number, "retry")
 
     assert retried and retried.attempt == 1
+    assert retried.conversation_id == "conversation-1"
     detail = json.loads(store.events(original.id)[-1]["detail_json"])
     assert detail["reset_pre_provider_attempts"] is False
+
+
+def test_retry_resets_legacy_attempts_when_provider_never_created_a_conversation(tmp_path):
+    store = Store(tmp_path / "state.db")
+    original = _add(store, issue())
+    claimed = store.claim_next("worker-a", 60, 2, {"codex": 2})
+    assert claimed
+    started = store.begin_attempt(claimed.id)
+    assert started.attempt == 1
+    failed = store.transition(
+        started.id,
+        JobState.FAILED,
+        phase="provider-tool-failure",
+        terminal_reason="Agent Server rejected the workspace before creating a conversation",
+    )
+    assert failed.conversation_id is None
+
+    retried = store.request_control(original.repository, original.issue_number, "retry")
+
+    assert retried and retried.state == JobState.QUEUED
+    assert retried.attempt == 0
+    detail = json.loads(store.events(original.id)[-1]["detail_json"])
+    assert detail["reset_pre_provider_attempts"] is True
+
+
+def test_retry_can_reset_preconversation_attempts_while_job_is_already_queued(tmp_path):
+    store = Store(tmp_path / "state.db")
+    original = _add(store, issue())
+    claimed = store.claim_next("worker-a", 60, 2, {"codex": 2})
+    assert claimed
+    started = store.begin_attempt(claimed.id)
+    queued = store.transition(
+        started.id,
+        JobState.QUEUED,
+        phase="provider-tool-retry",
+        actionable_message="Agent Server rejected the workspace",
+    )
+    assert queued.attempt == 1
+
+    retried = store.request_control(original.repository, original.issue_number, "retry")
+
+    assert retried and retried.state == JobState.QUEUED
+    assert retried.attempt == 0
+    assert retried.retry_requested
 
 
 def test_transition_event_preserves_failure_detail(tmp_path):

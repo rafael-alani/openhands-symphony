@@ -240,6 +240,7 @@ class WorkspaceManager:
         common_git_dir = self._inside(Path(common_git_output))
 
         def apply(tree: Path, *, writable: bool) -> None:
+            shared_gid = self.root.stat().st_gid
             for directory, names, files in os.walk(tree):
                 directory_path = Path(directory)
                 for target in (directory_path, *(directory_path / name for name in (*names, *files))):
@@ -250,6 +251,15 @@ class WorkspaceManager:
                         # Files from an earlier worker turn inherit the shared
                         # setgid group and 0007 umask; only their owner may chmod.
                         continue
+                    # Existing worktrees may predate the shared-group parent
+                    # repair. Mode bits alone are insufficient when those
+                    # entries still belong to the orchestrator's private group.
+                    # The orchestrator is a member of the narrow shared group,
+                    # so it can repair its own entries without privilege.
+                    try:
+                        os.chown(target, -1, shared_gid)
+                    except PermissionError as exc:
+                        raise WorkspaceError(f"cannot share workspace entry with the agent: {target}") from exc
                     owner = stat.S_IMODE(info.st_mode) & 0o700
                     group = owner >> 3 if writable else (owner & 0o500) >> 3
                     special = stat.S_ISGID if writable and target.is_dir() else 0

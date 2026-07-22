@@ -59,6 +59,7 @@ def test_installer_uses_release_neutral_python_and_playwright_dependencies() -> 
 
     assert "python3.12" not in installer
     assert "qemu-guest-agent" in installer
+    assert 'install -d -o "${SERVICE_USER}" -g "${SHARED_GROUP}" -m 0710 "${STATE_DIR}"' in installer
     assert 'install -d -o "${SERVICE_USER}" -g "${SHARED_GROUP}" -m 2710 "${STATE_DIR}/workspaces"' in installer
     assert "UV_PYTHON_INSTALL_DIR=/opt/uv-python" in installer
     assert "UV_MANAGED_PYTHON=true" in installer

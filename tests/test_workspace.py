@@ -48,9 +48,17 @@ def test_wrapper_commit_disables_repository_controlled_git_hooks(tmp_path):
     assert not sentinel.exists()
 
 
-def test_agent_gets_writable_content_but_read_only_git_metadata(tmp_path):
+def test_agent_gets_writable_shared_group_content_but_read_only_git_metadata(tmp_path, monkeypatch):
     worktree = create_worktree(tmp_path, "agent/1-test")
     manager = WorkspaceManager(tmp_path)
+    changed_groups: list[Path] = []
+    real_chown = os.chown
+
+    def record_chown(path, uid, gid):
+        changed_groups.append(Path(path))
+        real_chown(path, uid, gid)
+
+    monkeypatch.setattr(os, "chown", record_chown)
 
     manager.prepare_for_agent(worktree)
 
@@ -68,6 +76,10 @@ def test_agent_gets_writable_content_but_read_only_git_metadata(tmp_path):
     ).stdout.strip()
     if sys.platform.startswith("linux"):
         assert stat.S_IMODE(worktree.stat().st_mode) & stat.S_ISGID
+    assert worktree in changed_groups
+    assert worktree / "README.md" in changed_groups
+    assert worktree.stat().st_gid == manager.root.stat().st_gid
+    assert (worktree / "README.md").stat().st_gid == manager.root.stat().st_gid
     assert stat.S_IMODE((worktree / "README.md").stat().st_mode) & stat.S_IWGRP
     assert not stat.S_IMODE((worktree / ".git").stat().st_mode) & stat.S_IWGRP
     assert not stat.S_IMODE(manager._inside(Path(git_dir)).stat().st_mode) & stat.S_IWGRP

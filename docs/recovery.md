@@ -23,7 +23,7 @@ sudo jq '.validations' /var/lib/openhands-symphony/reports/RUN_ID/run.json
 
 The Markdown report includes each setup or validation command, exit status, timeout status, retained output, and an event history that preserves earlier failure reasons even after a later retry changes the current state. The JSON report contains the same durable event history. For surrounding service events, use `sudo agentctl logs` or query `openhands-symphony.service` with `journalctl`. Correct the reported cause and deploy any Symphony update before posting `/agent retry`. Setup and preflight failures do not consume an implementation attempt.
 
-Versions that counted every claim as an attempt can leave a no-conversation job at `retry-limit` after a setup failure. After upgrading, one explicit `/agent retry` detects that legacy setup-failure history, resets only the polluted pre-provider counter, and records the reset in the control event. Runs with a recorded provider attempt are not reset.
+Versions that counted claims or rejected provider launches as attempts can leave a no-conversation job at `retry-limit` after a setup or workspace-boundary failure. After upgrading, one explicit `/agent retry` detects the durable pre-conversation failure history, resets only the polluted counter, and records the reset in the control event. A run with a provider conversation or PR is not reset.
 
 ## Backup
 

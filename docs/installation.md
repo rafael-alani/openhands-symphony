@@ -66,7 +66,7 @@ Do not route a real issue until every required `doctor` row is `PASS`. The first
 | An unhealthy browser left an apparently active target | `agentctl start` verifies every required unit and restarts an unhealthy target; `doctor` reports the failed unit and a privileged journal command when needed. |
 | Doctor crashed while probing an intentionally inaccessible worker credential | Permission denial is treated as expected account isolation and covered by a regression test. |
 | Empty `setup_script` ran the worktree directory; Ubuntu `setpriv` rejected `--umask` | Empty setup is now a no-op. `doctor` executes the exact production validator wrapper and verifies the lower-authority user, clean environment, and `0007` umask before any issue is accepted. |
-| Agent Server could not traverse an orchestrator-created worktree under `UMask=0077` | Workspace container and repository-cache parent directories receive explicit shared-group traversal without granting workers permission to list or create sibling runs. |
+| Agent Server could not traverse an orchestrator-created worktree under `UMask=0077` | The private state parent grants the narrow worker group execute-only traversal, and every orchestrator-owned worktree/Git-metadata entry is repaired to that group before launch. Private database, report, and GitHub credential children remain inaccessible. `doctor` checks persisted worktrees using the worker's effective uid/groups. |
 
 The repository test suite covers these static contracts, while `doctor` covers the installed VM. Retain the complete clean `doctor` output with the first disposable [end-to-end smoke test](smoke-test.md); local tests alone do not certify a machine.
 

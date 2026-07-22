@@ -669,6 +669,7 @@ class Coordinator:
 
     def _run_claimed(self, claimed: Job) -> Job:
         job = claimed
+        provider_turn_started = False
         try:
             live = self.github.get_issue(job.repository, job.issue_number)
             decision = route(live, {job.review_provider} if job.review_provider else set())
@@ -814,8 +815,6 @@ class Coordinator:
                     )
                     return self._finish(job)
             self.workspaces.verify_integrity(job, worktree)
-            job = self.store.begin_attempt(job.id)
-            self._sync_status(job)
             prompt = implementation_prompt(
                 job,
                 self.config.service.global_agent_instruction,
@@ -836,12 +835,13 @@ class Coordinator:
                     )
                 else:
                     run = provider.start(worktree, prompt, job.id)
-                job = self.store.update_job(
+                provider_turn_started = True
+                job = self.store.begin_attempt(
                     job.id,
                     conversation_id=run.conversation_id,
                     session_id=run.session_id,
-                    phase="implementation",
                 )
+                self._sync_status(job)
                 result = self._wait(job, provider, run)
             job = self.store.update_job(
                 job.id,
@@ -983,6 +983,18 @@ class Coordinator:
                     phase="review-provider-failure",
                     actionable_message=f"Review provider/tool failed; the draft PR is preserved: {detail}",
                     release_lease=True,
+                )
+                return self._finish(job)
+            if not provider_turn_started:
+                job = self.store.transition(
+                    job.id,
+                    JobState.NEEDS_GUIDANCE,
+                    phase="provider-launch-failure",
+                    actionable_message=(
+                        "The provider never accepted an implementation turn, so no implementation attempt was "
+                        f"consumed. Fix the reported infrastructure error, run `agentctl doctor`, then use "
+                        f"/agent retry: {detail}"
+                    ),
                 )
                 return self._finish(job)
             if job.attempt < self.config.scheduler.max_attempts:

@@ -4,7 +4,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from symphony import doctor
-from symphony.doctor import _credential_exposure, _empty_setup_behavior, _service_failure_detail, _validator_boundary
+from symphony.doctor import (
+    _agent_worktree_permissions,
+    _credential_exposure,
+    _empty_setup_behavior,
+    _service_failure_detail,
+    _validator_boundary,
+)
 
 
 def test_inaccessible_worker_credential_is_treated_as_account_isolation(monkeypatch) -> None:
@@ -118,3 +124,56 @@ def test_doctor_probes_empty_setup_through_workspace_manager(tmp_path) -> None:
 
     assert check.ok
     assert calls == [(tmp_path, "", "openhands-validator")]
+
+
+def test_doctor_fails_when_agent_cannot_traverse_private_state_parent(tmp_path, monkeypatch) -> None:
+    workspace = tmp_path / "state" / "workspaces"
+    runs = workspace / "runs"
+    runs.mkdir(parents=True)
+    config = SimpleNamespace(service=SimpleNamespace(workspace_dir=workspace))
+    store = SimpleNamespace(list_jobs=lambda: [])
+    worker = SimpleNamespace(pw_name="openhands-agent", pw_uid=995, pw_gid=995)
+    monkeypatch.setattr(doctor.pwd, "getpwnam", lambda _name: worker)
+    monkeypatch.setattr(doctor.os, "getgrouplist", lambda _name, _gid: [995, 983])
+    monkeypatch.setattr(
+        doctor,
+        "_identity_has_permissions",
+        lambda path, _uid, _gids, _required: (
+            False,
+            "cannot traverse /var/lib/openhands-symphony: mode=0o700",
+        ),
+    )
+
+    check = _agent_worktree_permissions(config, store)
+
+    assert not check.ok
+    assert "cannot traverse" in check.detail
+
+
+def test_doctor_checks_each_persisted_worktree_as_agent_identity(tmp_path, monkeypatch) -> None:
+    workspace = tmp_path / "state" / "workspaces"
+    worktree = workspace / "runs" / "run-123"
+    worktree.mkdir(parents=True)
+    git_dir = workspace / "repositories" / "solo--project" / ".git" / "worktrees" / "run-123"
+    git_dir.mkdir(parents=True)
+    (worktree / ".git").write_text(f"gitdir: {git_dir}\n")
+    config = SimpleNamespace(service=SimpleNamespace(workspace_dir=workspace))
+    store = SimpleNamespace(list_jobs=lambda: [SimpleNamespace(worktree=str(worktree))])
+    worker = SimpleNamespace(pw_name="openhands-agent", pw_uid=995, pw_gid=995)
+    checked: list[tuple[Path, int]] = []
+    monkeypatch.setattr(doctor.pwd, "getpwnam", lambda _name: worker)
+    monkeypatch.setattr(doctor.os, "getgrouplist", lambda _name, _gid: [995, 983])
+
+    def accessible(path, _uid, _gids, required):
+        checked.append((Path(path), required))
+        return True, str(path)
+
+    monkeypatch.setattr(doctor, "_identity_has_permissions", accessible)
+
+    check = _agent_worktree_permissions(config, store)
+
+    assert check.ok
+    assert (worktree.resolve(), 0o7) in checked
+    assert ((worktree / ".git").resolve(), 0o4) in checked
+    assert (git_dir.parent.parent.resolve(), 0o5) in checked
+    assert (git_dir.resolve(), 0o5) in checked

@@ -500,8 +500,14 @@ class Store:
             )
             return self._job(connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
 
-    def begin_attempt(self, job_id: str) -> Job:
-        """Count an implementation attempt only after preflight and setup succeed."""
+    def begin_attempt(
+        self,
+        job_id: str,
+        *,
+        conversation_id: str | None = None,
+        session_id: str | None = None,
+    ) -> Job:
+        """Count an implementation attempt only after the provider accepts the turn."""
         now = utcnow()
         with self.transaction() as connection:
             row = connection.execute("SELECT state, attempt FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -510,10 +516,28 @@ class Store:
             if JobState(row["state"]) != JobState.RUNNING:
                 raise StoreError("an implementation attempt may only start for a running job")
             attempt = int(row["attempt"]) + 1
-            connection.execute("UPDATE jobs SET attempt=?, updated_at=? WHERE id=?", (attempt, now, job_id))
+            connection.execute(
+                """
+                UPDATE jobs SET attempt=?, conversation_id=COALESCE(?, conversation_id),
+                    session_id=COALESCE(?, session_id), phase='implementation', updated_at=?
+                WHERE id=?
+                """,
+                (attempt, conversation_id, session_id, now, job_id),
+            )
             connection.execute(
                 "INSERT INTO job_events(job_id, at, kind, detail_json) VALUES (?, ?, 'attempt-started', ?)",
-                (job_id, now, json.dumps({"attempt": attempt})),
+                (
+                    job_id,
+                    now,
+                    json.dumps(
+                        {
+                            "attempt": attempt,
+                            "conversation_id": conversation_id,
+                            "session_id": session_id,
+                        },
+                        sort_keys=True,
+                    ),
+                ),
             )
             return self._job(connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())  # type: ignore[return-value]
 
@@ -652,6 +676,46 @@ class Store:
                     )
                     connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
             elif command in {"resume", "retry"}:
+                has_attempt_events = (
+                    connection.execute(
+                        "SELECT 1 FROM job_events WHERE job_id=? AND kind='attempt-started' LIMIT 1",
+                        (job_id,),
+                    ).fetchone()
+                    is not None
+                )
+                has_legacy_setup_failure = (
+                    connection.execute(
+                        """
+                        SELECT 1 FROM job_events
+                        WHERE job_id=? AND kind='transition' AND detail_json LIKE '%setup-failed%'
+                        LIMIT 1
+                        """,
+                        (job_id,),
+                    ).fetchone()
+                    is not None
+                )
+                has_preconversation_provider_failure = (
+                    connection.execute(
+                        """
+                        SELECT 1 FROM job_events
+                        WHERE job_id=? AND kind='transition'
+                          AND (detail_json LIKE '%provider-tool-retry%'
+                               OR detail_json LIKE '%provider-tool-failure%')
+                        LIMIT 1
+                        """,
+                        (job_id,),
+                    ).fetchone()
+                    is not None
+                )
+                reset_pre_provider_attempts = (
+                    row["conversation_id"] is None
+                    and row["pr_number"] is None
+                    and int(row["attempt"]) > 0
+                    and (
+                        (not has_attempt_events and has_legacy_setup_failure)
+                        or has_preconversation_provider_failure
+                    )
+                )
                 retryable_review = (
                     state == JobState.PR_OPEN
                     and bool(row["review_required"])
@@ -660,31 +724,8 @@ class Store:
                 if (
                     state in {JobState.NEEDS_GUIDANCE, JobState.BLOCKED, JobState.FAILED, JobState.CANCELED}
                     or retryable_review
+                    or (state == JobState.QUEUED and reset_pre_provider_attempts)
                 ):
-                    has_attempt_events = (
-                        connection.execute(
-                            "SELECT 1 FROM job_events WHERE job_id=? AND kind='attempt-started' LIMIT 1",
-                            (job_id,),
-                        ).fetchone()
-                        is not None
-                    )
-                    has_legacy_setup_failure = (
-                        connection.execute(
-                            """
-                            SELECT 1 FROM job_events
-                            WHERE job_id=? AND kind='transition' AND detail_json LIKE '%setup-failed%'
-                            LIMIT 1
-                            """,
-                            (job_id,),
-                        ).fetchone()
-                        is not None
-                    )
-                    reset_pre_provider_attempts = (
-                        row["conversation_id"] is None
-                        and int(row["attempt"]) > 0
-                        and not has_attempt_events
-                        and has_legacy_setup_failure
-                    )
                     connection.execute(
                         """
                         UPDATE jobs SET state=?, phase='explicit-requeue', retry_requested=1,

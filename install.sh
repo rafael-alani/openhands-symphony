@@ -115,8 +115,9 @@ fi
 usermod -g "${SERVICE_USER}" -G "${SHARED_GROUP},${AUTH_GROUP}" "${SERVICE_USER}"
 usermod -g "${AGENT_USER}" -G "${SHARED_GROUP}" "${AGENT_USER}"
 usermod -g "${VALIDATOR_USER}" -G "${SHARED_GROUP}" "${VALIDATOR_USER}"
+install -d -o "${SERVICE_USER}" -g "${SHARED_GROUP}" -m 0710 "${STATE_DIR}"
 install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 0700 \
-  "${STATE_DIR}" "${STATE_DIR}/reports" "${STATE_DIR}/github" "${LOG_DIR}"
+  "${STATE_DIR}/reports" "${STATE_DIR}/github" "${LOG_DIR}"
 install -d -o "${SERVICE_USER}" -g "${SHARED_GROUP}" -m 2710 "${STATE_DIR}/workspaces"
 install -d -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0700 \
   "${AGENT_STATE_DIR}" "${AGENT_STATE_DIR}/browser" \

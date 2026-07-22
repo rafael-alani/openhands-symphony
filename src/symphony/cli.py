@@ -134,6 +134,20 @@ def _job_status_line(job: Job, report_dir: Path) -> str:
     )
 
 
+def _job_needs_explicit_retry(job: Job | None) -> bool:
+    if job is None:
+        return False
+    retryable_review = job.state.value == "pr-open" and job.review_required and job.phase != "review-complete"
+    polluted_queued_attempts = (
+        job.state.value == "queued" and job.attempt > 0 and not job.conversation_id and not job.pr_number
+    )
+    return (
+        job.state.value in {"needs-guidance", "blocked", "failed", "canceled"}
+        or retryable_review
+        or polluted_queued_attempts
+    )
+
+
 def _systemctl(action: str) -> int:
     if action == "start":
         target = "openhands-symphony.target"
@@ -243,15 +257,7 @@ def main() -> None:
         repository, issue_number = args.item
         snapshot = coordinator.github.get_issue(repository, issue_number)
         existing = store.get_job(repository, issue_number)
-        retryable_review = (
-            existing
-            and existing.state.value == "pr-open"
-            and existing.review_required
-            and existing.phase != "review-complete"
-        )
-        if existing and (
-            existing.state.value in {"needs-guidance", "blocked", "failed", "canceled"} or retryable_review
-        ):
+        if _job_needs_explicit_retry(existing):
             job = coordinator.control(repository, issue_number, "retry")
             print(f"requeued run={job.id if job else '-'}")
         else:

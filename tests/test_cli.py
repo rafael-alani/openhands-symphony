@@ -5,7 +5,12 @@ from types import SimpleNamespace
 import pytest
 
 from symphony import cli
-from symphony.cli import _antigravity_cpu_error, _authentication_environment, _job_status_line
+from symphony.cli import (
+    _antigravity_cpu_error,
+    _authentication_environment,
+    _job_needs_explicit_retry,
+    _job_status_line,
+)
 
 
 def test_antigravity_cpu_preflight_rejects_x86_vm_without_pclmulqdq() -> None:
@@ -195,3 +200,16 @@ def test_job_status_exposes_phase_conversation_and_report(tmp_path) -> None:
     assert "conversation=conversation-456" in line
     assert "review_conversation=-" in line
     assert f"report={report}" in line
+
+
+def test_queued_preconversation_attempts_are_explicitly_retried_for_legacy_recovery() -> None:
+    job = SimpleNamespace(
+        state=SimpleNamespace(value="queued"),
+        review_required=False,
+        phase="explicit-requeue",
+        attempt=3,
+        conversation_id=None,
+        pr_number=None,
+    )
+
+    assert _job_needs_explicit_retry(job)

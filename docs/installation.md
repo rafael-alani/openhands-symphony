@@ -66,6 +66,8 @@ sudo -iu openhands-symphony agentctl cancel owner/repo#123
 
 `agentctl update` reruns the installer from the source checkout recorded at installation. Update that checkout and review `versions.env` intentionally first; the command itself does not pull a branch and no service follows an unpinned `latest` channel. The installer stops an active target before replacing executables and restarts it only after a successful update.
 
+In particular, `git pull` alone does not replace `/usr/local/bin/agentctl`: that executable comes from the installed environment under `/opt/openhands-symphony-tool`. After pulling, run `sudo agentctl update` (or `sudo ./install.sh --update` from the checkout) before testing changed CLI behavior.
+
 ## Access
 
 ```bash

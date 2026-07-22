@@ -34,6 +34,15 @@ Because the source repository is private, install a read-only GitHub deploy key 
 
 The installer preserves `/etc/openhands-symphony/config.toml` and credential state on reruns. It exposes nothing publicly: the webhook listener and Chromium bind loopback, while a dedicated nftables table drops non-loopback ingress to Canvas, the webhook listener, and CDP (ports 8000/8787/9222). This firewall is necessary because Canvas 1.4.0's Node ingress listens on a wildcard socket even though its internal backends use loopback.
 
+On an existing VM, `git pull` updates only this source checkout; `/usr/local/bin/agentctl` is an installed copy under `/opt`. Deploy pulled changes before rerunning the setup block:
+
+```bash
+git pull origin main
+sudo agentctl update
+```
+
+`agentctl update` reruns the installer from the recorded source checkout while preserving configuration and credentials. Running `sudo ./install.sh --update` from the checkout is equivalent.
+
 After replacing `CHANGE_ME/CHANGE_ME` in the config:
 
 ```bash

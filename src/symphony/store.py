@@ -9,9 +9,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .execution import ExecutionRef, RepositoryLeases
 from .models import ACTIVE_STATES, IssueSnapshot, Job, JobState, ValidationResult, utcnow
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+ISSUE_RUN_KIND = "github-issue"
 
 ALLOWED_TRANSITIONS: dict[JobState, set[JobState]] = {
     JobState.QUEUED: {
@@ -128,11 +130,16 @@ class Store:
 
                     CREATE TABLE leases (
                         concurrency_key TEXT PRIMARY KEY,
-                        job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+                        run_kind TEXT NOT NULL,
+                        run_id TEXT NOT NULL,
+                        repository TEXT NOT NULL,
+                        provider TEXT NOT NULL,
                         owner TEXT NOT NULL,
                         expires_at TEXT NOT NULL,
-                        heartbeat_at TEXT NOT NULL
+                        heartbeat_at TEXT NOT NULL,
+                        UNIQUE(run_kind, run_id)
                     );
+                    CREATE INDEX leases_provider_idx ON leases(provider, expires_at);
 
                     CREATE TABLE deliveries (
                         delivery_id TEXT PRIMARY KEY,
@@ -202,7 +209,46 @@ class Store:
                         )
                         """
                     )
+                if version < 4:
+                    self._migrate_source_neutral_leases(connection)
                 connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+    @staticmethod
+    def _migrate_source_neutral_leases(connection: sqlite3.Connection) -> None:
+        """Rebuild v1-v3 job leases without losing an in-flight production claim."""
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(leases)").fetchall()}
+        if "run_kind" in columns:
+            connection.execute("CREATE INDEX IF NOT EXISTS leases_provider_idx ON leases(provider, expires_at)")
+            return
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS leases_v4 (
+                concurrency_key TEXT PRIMARY KEY,
+                run_kind TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                repository TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL,
+                UNIQUE(run_kind, run_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO leases_v4(
+                concurrency_key, run_kind, run_id, repository, provider, owner, expires_at, heartbeat_at
+            )
+            SELECT l.concurrency_key, ?, l.job_id, j.repository, j.implementation_provider,
+                   l.owner, l.expires_at, l.heartbeat_at
+            FROM leases l JOIN jobs j ON j.id=l.job_id
+            """,
+            (ISSUE_RUN_KIND,),
+        )
+        connection.execute("DROP TABLE leases")
+        connection.execute("ALTER TABLE leases_v4 RENAME TO leases")
+        connection.execute("CREATE INDEX IF NOT EXISTS leases_provider_idx ON leases(provider, expires_at)")
 
     @staticmethod
     def _job(row: sqlite3.Row | None) -> Job | None:
@@ -353,8 +399,11 @@ class Store:
         now = utcnow()
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT j.* FROM leases l JOIN jobs j ON j.id=l.job_id WHERE l.expires_at<=? ORDER BY j.created_at",
-                (now,),
+                """
+                SELECT j.* FROM leases l JOIN jobs j ON j.id=l.run_id
+                WHERE l.run_kind=? AND l.expires_at<=? ORDER BY j.created_at
+                """,
+                (ISSUE_RUN_KIND, now),
             ).fetchall()
         return [self._job(row) for row in rows if row is not None]
 
@@ -363,15 +412,15 @@ class Store:
         recovered: list[str] = []
         with self.transaction() as connection:
             query = (
-                "SELECT l.job_id, j.state, j.pause_requested, j.cancel_requested "
-                "FROM leases l JOIN jobs j ON j.id=l.job_id WHERE l.expires_at<=?"
+                "SELECT l.run_id AS job_id, j.state, j.pause_requested, j.cancel_requested "
+                "FROM leases l JOIN jobs j ON j.id=l.run_id WHERE l.run_kind=? AND l.expires_at<=?"
             )
-            parameters: list[Any] = [now]
+            parameters: list[Any] = [ISSUE_RUN_KIND, now]
             if job_ids is not None:
                 if not job_ids:
                     return []
                 placeholders = ",".join("?" for _ in job_ids)
-                query += f" AND l.job_id IN ({placeholders})"
+                query += f" AND l.run_id IN ({placeholders})"
                 parameters.extend(sorted(job_ids))
             rows = connection.execute(query, parameters).fetchall()
             for row in rows:
@@ -417,7 +466,7 @@ class Store:
                         job_id,
                     ),
                 )
-                connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
+                RepositoryLeases.release(connection, ISSUE_RUN_KIND, job_id)
                 connection.execute(
                     "INSERT INTO job_events(job_id, at, kind, detail_json) VALUES (?, ?, 'lease-expired', '{}')",
                     (job_id, now),
@@ -434,22 +483,11 @@ class Store:
     ) -> Job | None:
         now_dt = datetime.now(UTC)
         now = now_dt.isoformat()
-        expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
         with self.transaction() as connection:
-            active_count = connection.execute("SELECT COUNT(*) FROM leases WHERE expires_at>?", (now,)).fetchone()[0]
+            active_count = RepositoryLeases.active_count(connection, now)
             if active_count >= global_limit:
                 return None
-            provider_counts = {
-                str(row["implementation_provider"]): int(row["count"])
-                for row in connection.execute(
-                    """
-                    SELECT j.implementation_provider, COUNT(*) AS count
-                    FROM leases l JOIN jobs j ON j.id=l.job_id
-                    WHERE l.expires_at>? GROUP BY j.implementation_provider
-                    """,
-                    (now,),
-                ).fetchall()
-            }
+            provider_counts = RepositoryLeases.provider_counts(connection, now)
             rows = connection.execute(
                 """
                 SELECT j.* FROM jobs j
@@ -481,9 +519,18 @@ class Store:
                 return None
             job_id = str(chosen["id"])
             concurrency_key = str(chosen["concurrency_key"])
-            connection.execute(
-                "INSERT INTO leases(concurrency_key, job_id, owner, expires_at, heartbeat_at) VALUES (?, ?, ?, ?, ?)",
-                (concurrency_key, job_id, owner, expires, now),
+            lease = RepositoryLeases.claim(
+                connection,
+                ExecutionRef(
+                    ISSUE_RUN_KIND,
+                    job_id,
+                    str(chosen["repository"]),
+                    concurrency_key,
+                    str(chosen["implementation_provider"]),
+                ),
+                owner,
+                lease_seconds,
+                now=now_dt,
             )
             connection.execute(
                 """
@@ -492,11 +539,11 @@ class Store:
                     finished_at=NULL
                 WHERE id=?
                 """,
-                (JobState.RUNNING, owner, expires, now, now, now, job_id),
+                (JobState.RUNNING, owner, lease.expires_at, now, now, now, job_id),
             )
             connection.execute(
                 "INSERT INTO job_events(job_id, at, kind, detail_json) VALUES (?, ?, 'claimed', ?)",
-                (job_id, now, json.dumps({"owner": owner, "expires_at": expires})),
+                (job_id, now, json.dumps({"owner": owner, "expires_at": lease.expires_at})),
             )
             return self._job(connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
 
@@ -544,18 +591,16 @@ class Store:
     def renew_lease(self, job_id: str, owner: str, lease_seconds: int) -> bool:
         now_dt = datetime.now(UTC)
         now = now_dt.isoformat()
-        expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
         with self.transaction() as connection:
-            cursor = connection.execute(
-                "UPDATE leases SET expires_at=?, heartbeat_at=? WHERE job_id=? AND owner=? AND expires_at>?",
-                (expires, now, job_id, owner, now),
+            expires = RepositoryLeases.renew(
+                connection, ISSUE_RUN_KIND, job_id, owner, lease_seconds, now=now_dt
             )
-            if cursor.rowcount:
+            if expires:
                 connection.execute(
                     "UPDATE jobs SET lease_expires_at=?, heartbeat_at=?, updated_at=? WHERE id=?",
                     (expires, now, now, job_id),
                 )
-            return cursor.rowcount == 1
+            return expires is not None
 
     def transition(
         self,
@@ -592,7 +637,7 @@ class Store:
             if should_release:
                 fields["lease_owner"] = None
                 fields["lease_expires_at"] = None
-                connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
+                RepositoryLeases.release(connection, ISSUE_RUN_KIND, job_id)
             assignments = ", ".join(f"{key}=?" for key in fields)
             connection.execute(f"UPDATE jobs SET {assignments} WHERE id=?", (*fields.values(), job_id))
             event_detail: dict[str, Any] = {"from": str(current), "to": str(new_state), "phase": phase}
@@ -663,7 +708,7 @@ class Store:
                         """,
                         (JobState.CANCELED, JobState.CANCELED, "Canceled by operator.", now, job_id),
                     )
-                    connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
+                    RepositoryLeases.release(connection, ISSUE_RUN_KIND, job_id)
             elif command == "pause":
                 message = "Paused by /agent pause; use /agent resume to requeue."
                 connection.execute(
@@ -675,7 +720,7 @@ class Store:
                         "UPDATE jobs SET state=?, phase='paused', lease_owner=NULL, lease_expires_at=NULL WHERE id=?",
                         (JobState.NEEDS_GUIDANCE, job_id),
                     )
-                    connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
+                    RepositoryLeases.release(connection, ISSUE_RUN_KIND, job_id)
             elif command in {"resume", "retry"}:
                 has_attempt_events = (
                     connection.execute(

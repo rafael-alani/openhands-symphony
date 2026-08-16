@@ -31,6 +31,59 @@ def test_duplicate_intake_coalesces_to_one_job(tmp_path):
     assert len(store.list_jobs()) == 1
 
 
+def test_fresh_database_uses_source_neutral_repository_leases(tmp_path):
+    store = Store(tmp_path / "state.db")
+
+    with store.connect() as connection:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(leases)")}
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+
+    assert {"run_kind", "run_id", "repository", "provider"} <= columns
+    assert "job_id" not in columns
+    assert version == 4
+
+
+def test_v3_migration_preserves_active_lease_and_is_idempotent(tmp_path):
+    path = tmp_path / "state.db"
+    store = Store(path)
+    original = _add(store, issue())
+    claimed = store.claim_next("worker-a", 60, 2, {"codex": 2})
+    assert claimed
+    with store.transaction() as connection:
+        connection.execute("DROP INDEX leases_provider_idx")
+        connection.execute("ALTER TABLE leases RENAME TO leases_v4_current")
+        connection.execute(
+            """
+            CREATE TABLE leases (
+                concurrency_key TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+                owner TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO leases(concurrency_key, job_id, owner, expires_at, heartbeat_at)
+            SELECT concurrency_key, run_id, owner, expires_at, heartbeat_at FROM leases_v4_current
+            """
+        )
+        connection.execute("DROP TABLE leases_v4_current")
+        connection.execute("PRAGMA user_version=3")
+
+    migrated = Store(path)
+    rerun = Store(path)
+    with rerun.connect() as connection:
+        lease = dict(connection.execute("SELECT * FROM leases").fetchone())
+
+    assert lease["run_kind"] == "github-issue"
+    assert lease["run_id"] == original.id
+    assert lease["repository"] == original.repository
+    assert lease["provider"] == original.implementation_provider
+    assert migrated.get_job_by_id(original.id).lease_owner == "worker-a"
+
+
 def test_restart_recovers_expired_lease_without_duplicate(tmp_path):
     path = tmp_path / "state.db"
     store = Store(path)

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import shlex
 from dataclasses import asdict
 from pathlib import Path
 
 from .models import Job
+from .reporting import RunReportArtifacts
 from .store import Store
 from .workspace import redact
 
@@ -15,24 +15,18 @@ class ReportWriter:
     def __init__(self, root: Path, store: Store):
         self.root = root
         self.store = store
-        self.root.mkdir(parents=True, exist_ok=True)
-        os.chmod(self.root, 0o700)
+        self.artifacts = RunReportArtifacts(root)
 
     def write(self, job: Job) -> tuple[Path, Path]:
-        directory = self.root / job.id
-        directory.mkdir(parents=True, exist_ok=True)
-        os.chmod(directory, 0o700)
         validations = self.store.validations(job.id)
         events = self.store.events(job.id)
         payload = {"job": asdict(job), "validations": validations, "events": events}
         payload["job"]["state"] = str(job.state)
-        json_path = directory / "run.json"
-        markdown_path = directory / "run.md"
-        json_path.write_text(redact(json.dumps(payload, indent=2, sort_keys=True, default=str), 5_000_000) + "\n")
-        markdown_path.write_text(self._markdown(job, validations, events))
-        os.chmod(json_path, 0o600)
-        os.chmod(markdown_path, 0o600)
-        return markdown_path, json_path
+        return self.artifacts.write(
+            job.id,
+            self._markdown(job, validations, events),
+            json.dumps(payload, indent=2, sort_keys=True, default=str),
+        )
 
     @staticmethod
     def _markdown(

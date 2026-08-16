@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .config import Config
+from .execution import ProviderSlots
 from .github import GitHubBackend, GitHubError, StaleIssueError
 from .intake import branch_name, route
 from .models import IssueSnapshot, Job, JobState, ProviderOutcome, ProviderRun
@@ -20,7 +21,8 @@ from .providers.openhands import OpenHandsProviderError
 from .reports import ReportWriter
 from .status import render_status
 from .store import Store, StoreError
-from .workspace import WorkspaceError, WorkspaceManager, redact, run_validation
+from .validation import run_validation
+from .workspace import WorkspaceError, WorkspaceManager, redact
 
 
 class IntakeError(RuntimeError):
@@ -47,11 +49,7 @@ class Coordinator:
         self._active_runs: dict[str, tuple[ProviderAdapter, ProviderRun]] = {}
         self._active_lock = threading.Lock()
         self._operation_owner = f"coordinator:{uuid.uuid4()}"
-        self._provider_slots = {
-            name: threading.BoundedSemaphore(config.scheduler.provider_concurrency.get(name, 1))
-            for name in providers
-            if config.scheduler.provider_concurrency.get(name, 1) > 0
-        }
+        self.provider_slots = ProviderSlots(config.scheduler.provider_concurrency, set(providers))
 
     def _available_reviewers(self) -> set[str]:
         candidates: set[str] = set()
@@ -492,16 +490,14 @@ class Coordinator:
 
     @contextmanager
     def _provider_slot(self, job: Job, provider: ProviderAdapter):
-        semaphore = self._provider_slots.get(provider.name)
-        if semaphore is None:
-            raise OpenHandsProviderError(f"{provider.name} has no available provider concurrency slot")
-        while not semaphore.acquire(timeout=self.config.scheduler.heartbeat_seconds):
+        def heartbeat() -> None:
             if not self.store.renew_lease(job.id, job.lease_owner or "", self.config.scheduler.lease_seconds):
                 raise OpenHandsProviderError(f"lease expired while waiting for a {provider.name} provider slot")
-        try:
+
+        with self.provider_slots.acquire(provider.name, self.config.scheduler.heartbeat_seconds, heartbeat) as acquired:
+            if not acquired:
+                raise OpenHandsProviderError(f"{provider.name} has no available provider concurrency slot")
             yield
-        finally:
-            semaphore.release()
 
     def _validation_commands(self, job: Job, worktree: Path) -> tuple[tuple[str, ...], ...]:
         commands = self.config.repository(job.repository).validation_commands

@@ -7,59 +7,26 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .models import IssueSnapshot, Job, ValidationResult, utcnow
+from .models import IssueSnapshot, Job, ValidationResult
+from .validation import SENSITIVE_ENV, redact, run_validation, validation_argv, validation_environment
+
+__all__ = [
+    "WorkspaceError",
+    "WorkspaceManager",
+    "SENSITIVE_ENV",
+    "orchestrator_environment",
+    "redact",
+    "run_validation",
+    "validation_argv",
+    "validation_environment",
+]
 
 
 class WorkspaceError(RuntimeError):
     pass
 
 
-SECRET_PATTERN = re.compile(
-    r"(?i)(authorization:\s*(?:bearer|token)\s+)[^\s]+|((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s]+"
-)
-SENSITIVE_ENV = {
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
-    "BROWSER_USE_API_KEY",
-    "GH_CONFIG_DIR",
-}
-
 DEFAULT_GH_CONFIG_DIR = "/var/lib/openhands-symphony/github"
-
-
-def redact(value: str, limit: int = 50_000) -> str:
-    return SECRET_PATTERN.sub(lambda match: f"{match.group(1) or match.group(2)}[REDACTED]", value)[-limit:]
-
-
-def validation_environment() -> dict[str, str]:
-    return {key: value for key, value in os.environ.items() if key not in SENSITIVE_ENV}
-
-
-def validation_argv(command: tuple[str, ...], run_as_user: str) -> list[str]:
-    if not run_as_user:
-        return list(command)
-    return [
-        "sudo",
-        "-n",
-        "-H",
-        "-u",
-        run_as_user,
-        "--",
-        "env",
-        "-i",
-        f"HOME=/var/lib/{run_as_user}",
-        "PATH=/opt/browser-use/bin:/usr/local/bin:/usr/bin:/bin",
-        "CI=true",
-        "/bin/sh",
-        "-c",
-        'umask 0007; exec "$@"',
-        "symphony-validation",
-        *command,
-    ]
 
 
 def orchestrator_environment() -> dict[str, str]:
@@ -135,9 +102,17 @@ class WorkspaceManager:
         return repository.replace("/", "--")
 
     def checkout(self, job: Job, snapshot: IssueSnapshot) -> Path:
-        key = self._repo_key(job.repository)
+        return self.checkout_run(
+            run_id=job.id,
+            repository=job.repository,
+            branch=job.branch,
+            base_branch=snapshot.default_branch,
+        )
+
+    def checkout_run(self, *, run_id: str, repository: str, branch: str, base_branch: str) -> Path:
+        key = self._repo_key(repository)
         repository_dir = self._inside(self.root / "repositories" / key)
-        worktree = self._inside(self.root / "runs" / job.id)
+        worktree = self._inside(self.root / "runs" / run_id)
         repository_dir.parent.mkdir(parents=True, exist_ok=True)
         worktree.parent.mkdir(parents=True, exist_ok=True)
 
@@ -145,7 +120,7 @@ class WorkspaceManager:
             if repository_dir.exists() and any(repository_dir.iterdir()):
                 raise WorkspaceError(f"repository cache is not a git checkout: {repository_dir}")
             _run(
-                ["gh", "repo", "clone", job.repository, str(repository_dir), "--", "--filter=blob:none"],
+                ["gh", "repo", "clone", repository, str(repository_dir), "--", "--filter=blob:none"],
                 timeout=900,
                 env=orchestrator_environment(),
             )
@@ -163,7 +138,7 @@ class WorkspaceManager:
 
         local_branch = (
             subprocess.run(
-                ["git", "-C", str(repository_dir), "show-ref", "--verify", "--quiet", f"refs/heads/{job.branch}"],
+                ["git", "-C", str(repository_dir), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
                 env=validation_environment(),
                 check=False,
             ).returncode
@@ -178,7 +153,7 @@ class WorkspaceManager:
                     "show-ref",
                     "--verify",
                     "--quiet",
-                    f"refs/remotes/origin/{job.branch}",
+                    f"refs/remotes/origin/{branch}",
                 ],
                 env=validation_environment(),
                 check=False,
@@ -186,7 +161,7 @@ class WorkspaceManager:
             == 0
         )
         if local_branch:
-            _run(["git", "-C", str(repository_dir), "worktree", "add", str(worktree), job.branch], timeout=300)
+            _run(["git", "-C", str(repository_dir), "worktree", "add", str(worktree), branch], timeout=300)
         elif remote_branch:
             _run(
                 [
@@ -196,9 +171,9 @@ class WorkspaceManager:
                     "worktree",
                     "add",
                     "-b",
-                    job.branch,
+                    branch,
                     str(worktree),
-                    f"origin/{job.branch}",
+                    f"origin/{branch}",
                 ],
                 timeout=300,
             )
@@ -211,9 +186,9 @@ class WorkspaceManager:
                     "worktree",
                     "add",
                     "-b",
-                    job.branch,
+                    branch,
                     str(worktree),
-                    f"origin/{snapshot.default_branch}",
+                    f"origin/{base_branch}",
                 ],
                 timeout=300,
             )
@@ -274,8 +249,11 @@ class WorkspaceManager:
         apply(git_dir, writable=False)
 
     def verify_integrity(self, job: Job, worktree: Path) -> None:
+        self.verify_run_integrity(job.id, job.repository, worktree)
+
+    def verify_run_integrity(self, run_id: str, repository: str, worktree: Path) -> None:
         root = self._inside(worktree)
-        expected_root = self._inside(self.root / "runs" / job.id)
+        expected_root = self._inside(self.root / "runs" / run_id)
         if root != expected_root:
             raise WorkspaceError(f"job worktree path changed: expected {expected_root}, observed {root}")
         dot_git = root / ".git"
@@ -285,7 +263,7 @@ class WorkspaceManager:
         if not match:
             raise WorkspaceError("worktree .git pointer is invalid")
         git_dir = Path(match.group(1)).resolve()
-        repository_git = self._inside(self.root / "repositories" / self._repo_key(job.repository) / ".git")
+        repository_git = self._inside(self.root / "repositories" / self._repo_key(repository) / ".git")
         worktree_metadata = repository_git / "worktrees"
         if not git_dir.is_relative_to(worktree_metadata) or not git_dir.is_dir():
             raise WorkspaceError("worktree Git metadata escaped the repository cache")
@@ -390,7 +368,11 @@ class WorkspaceManager:
 
     @staticmethod
     def commit(worktree: Path, issue_number: int) -> str:
-        _run(["git", "add", "--all"], cwd=worktree)
+        return WorkspaceManager.commit_run(worktree, f"Implement issue #{issue_number}")
+
+    @staticmethod
+    def commit_run(worktree: Path, message: str, paths: tuple[str, ...] = ()) -> str:
+        _run(["git", "add", "--", *paths] if paths else ["git", "add", "--all"], cwd=worktree)
         staged = subprocess.run(
             ["git", "diff", "--cached", "--quiet"],
             cwd=worktree,
@@ -412,7 +394,7 @@ class WorkspaceManager:
                 "user.email=openhands-symphony@localhost",
                 "commit",
                 "-m",
-                f"Implement issue #{issue_number}",
+                message,
             ],
             cwd=worktree,
             timeout=300,
@@ -433,30 +415,3 @@ class WorkspaceManager:
     def github_remote(repository: str) -> str:
         WorkspaceManager._repo_key(repository)
         return f"https://github.com/{repository}.git"
-
-
-def run_validation(
-    command: tuple[str, ...],
-    worktree: Path,
-    timeout_seconds: int,
-    *,
-    run_as_user: str = "",
-) -> ValidationResult:
-    if not command:
-        raise WorkspaceError("empty validation command")
-    started = utcnow()
-    try:
-        process = subprocess.run(
-            validation_argv(command, run_as_user),
-            cwd=worktree,
-            env=validation_environment(),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=timeout_seconds,
-            check=False,
-        )
-        return ValidationResult(command, process.returncode, started, utcnow(), redact(process.stdout))
-    except subprocess.TimeoutExpired as exc:
-        output = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-        return ValidationResult(command, None, started, utcnow(), redact(output), timed_out=True)

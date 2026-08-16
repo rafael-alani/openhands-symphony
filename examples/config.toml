@@ -20,6 +20,12 @@ auth_mode = "gh"
 generated_pr_label = "generated-by-agent"
 bot_login = ""
 
+[ideas]
+repositories = []
+private_only = true
+spec_path = "idea/SPEC.md"
+progress_path = "idea/PROGRESS.md"
+
 [scheduler]
 poll_seconds = 30
 reconcile_seconds = 300

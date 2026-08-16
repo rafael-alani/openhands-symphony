@@ -23,6 +23,15 @@ The default path is `/etc/openhands-symphony/config.toml`; override it with `SYM
 - `generated_pr_label`: label applied to created PRs.
 - `bot_login`: optional expected bot identity for operational auditing.
 
+## `[ideas]`
+
+- `repositories`: exact private `owner/repository` allowlist for spec-driven ideas runs.
+- `private_only`: required to remain `true`; ideas runs may push only to private repositories.
+- `spec_path`: user-owned spec path, default `idea/SPEC.md`.
+- `progress_path`: agent-owned progress path, default `idea/PROGRESS.md`.
+
+The ideas and Tier 1 allowlists must be disjoint. Only repositories in `[ideas].repositories` may receive direct default-branch publications; Tier 1 continues to publish generated branches and draft PRs. Both tiers share the scheduler's global and per-provider concurrency limits and repository leases.
+
 ## `[scheduler]`
 
 Polling/reconciliation intervals, lease/heartbeat durations, global concurrency, attempt/correction/review bounds, validation timeout, and backoff bounds. `[scheduler.provider_concurrency]` caps each provider independently. Setting a provider to zero makes it unavailable to claims.
@@ -56,3 +65,5 @@ The shipped example leaves both fields empty. When no operator-pinned commands o
 Setup and validation commands execute with a clean environment as `validation_user`, not as the GitHub-owning orchestrator or subscription-owning worker. They retain network access for normal dependency/test workflows but cannot read either credential home.
 
 Repository-native `AGENTS.md`, `CLAUDE.md`, documentation, OpenHands skills, setup scripts, and hooks remain authoritative within the higher-level safety boundary.
+
+For an ideas repository, the same section supplies advisory `validation_commands`, setup, and repository instructions. `concurrency_scope = "label"` is unavailable because ideas intake has no issue labels. The repository's `.symphony/idea.toml` selects the provider and defines the preview start argv, port, health path, and startup timeout.

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .config import load_config
 from .doctor import run_doctor
-from .models import Job
+from .models import IdeaProject, IdeaRun, Job
 from .runtime import build_coordinator, validate_operational_config
 
 
@@ -134,6 +134,17 @@ def _job_status_line(job: Job, report_dir: Path) -> str:
     )
 
 
+def _idea_status_line(project: IdeaProject, run: IdeaRun | None, report_dir: Path) -> str:
+    report = report_dir / run.id / "run.md" if run else None
+    return (
+        f"{project.repository} latest={project.latest_observed_spec_hash or '-'} "
+        f"completed={project.latest_completed_spec_hash or '-'} state={run.state if run else '-'} "
+        f"run={run.id if run else '-'} publication={run.published_commit if run and run.published_commit else '-'} "
+        f"question={run.question if run and run.state.value == 'question' else '-'} "
+        f"report={report if report and report.is_file() else '-'}"
+    )
+
+
 def _job_needs_explicit_retry(job: Job | None) -> bool:
     if job is None:
         return False
@@ -237,11 +248,21 @@ def main() -> None:
         print(f"jobs={len(jobs)}")
         for job in jobs:
             print(_job_status_line(job, config.service.report_dir))
+        projects = store.list_idea_projects()
+        runs = store.list_idea_runs()
+        latest = {project.repository: None for project in projects}
+        for run in runs:
+            latest[run.repository] = run
+        print(f"ideas={len(projects)}")
+        for project in projects:
+            print(_idea_status_line(project, latest[project.repository], config.service.report_dir))
         raise SystemExit(0)
     if args.command == "reconcile":
         for repository, issue_number, result in coordinator.reconcile():
             item = f"{repository}#{issue_number}" if issue_number else repository
             print(f"{item}: {result}")
+        for repository, result in coordinator.ideas.reconcile():
+            print(f"{repository}: {result}")
         raise SystemExit(0)
     if args.command == "labels":
         from .labels import LABEL_CONTRACT

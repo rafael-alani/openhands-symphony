@@ -223,6 +223,10 @@ def _agent_worktree_permissions(config: Config, store: Store) -> Check:
     for job in store.list_jobs():
         if job.worktree:
             candidates.add(Path(job.worktree))
+    if hasattr(store, "list_idea_runs"):
+        for run in store.list_idea_runs():
+            if run.worktree:
+                candidates.add(Path(run.worktree))
     try:
         candidates.update(path for path in runs.iterdir() if path.is_dir())
     except OSError as exc:
@@ -333,6 +337,26 @@ def _browser_cdp(expected: str) -> Check:
         return Check("headless Chromium CDP", False, str(exc))
 
 
+def _idea_project_checks(config: Config, store: Store) -> list[Check]:
+    latest_runs = {}
+    for run in store.list_idea_runs():
+        latest_runs[run.repository] = run
+    projects = {project.repository: project for project in store.list_idea_projects()}
+    checks: list[Check] = []
+    for repository in config.ideas.repositories:
+        project = projects.get(repository)
+        run = latest_runs.get(repository)
+        detail = (
+            f"latest={project.latest_observed_spec_hash if project else '-'}; "
+            f"completed={project.latest_completed_spec_hash if project else '-'}; "
+            f"state={run.state if run else '-'}; "
+            f"publication={run.published_commit if run and run.published_commit else '-'}; "
+            f"question={run.question if run and run.state.value == 'question' else '-'}"
+        )
+        checks.append(Check(f"idea project {repository}", project is not None, detail, required=False))
+    return checks
+
+
 def _service_failure_detail(service: str, state: str) -> str:
     if state == "active":
         return state
@@ -399,7 +423,7 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
             "config allowlist",
             bool(config.github.allowed_repositories)
             and all("CHANGE_ME" not in repository for repository in config.github.allowed_repositories),
-            ", ".join(config.github.allowed_repositories),
+            f"tier1={','.join(config.github.allowed_repositories)}; ideas={','.join(config.ideas.repositories)}",
         ),
         Check(
             "localhost service bind",
@@ -599,4 +623,5 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
                 json.dumps(capabilities.__dict__, sort_keys=True),
             )
         )
+    checks.extend(_idea_project_checks(config, store))
     return checks

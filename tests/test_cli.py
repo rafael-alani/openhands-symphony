@@ -8,6 +8,7 @@ from symphony import cli
 from symphony.cli import (
     _antigravity_cpu_error,
     _authentication_environment,
+    _idea_status_line,
     _job_needs_explicit_retry,
     _job_status_line,
 )
@@ -213,3 +214,28 @@ def test_queued_preconversation_attempts_are_explicitly_retried_for_legacy_recov
     )
 
     assert _job_needs_explicit_retry(job)
+
+
+def test_idea_status_exposes_hash_state_publication_and_question(tmp_path) -> None:
+    report = tmp_path / "idea-run" / "run.md"
+    report.parent.mkdir()
+    report.write_text("# idea report\n")
+    project = SimpleNamespace(
+        repository="solo/idea",
+        latest_observed_spec_hash="new-hash",
+        latest_completed_spec_hash="old-hash",
+    )
+    run = SimpleNamespace(
+        id="idea-run",
+        state=SimpleNamespace(value="question"),
+        published_commit="commit-1",
+        question="Pick A or B?",
+    )
+
+    line = _idea_status_line(project, run, tmp_path)
+
+    assert "latest=new-hash" in line
+    assert "completed=old-hash" in line
+    assert "publication=commit-1" in line
+    assert "question=Pick A or B?" in line
+    assert f"report={report}" in line

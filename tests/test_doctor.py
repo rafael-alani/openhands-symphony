@@ -8,6 +8,7 @@ from symphony.doctor import (
     _agent_worktree_permissions,
     _credential_exposure,
     _empty_setup_behavior,
+    _idea_project_checks,
     _service_failure_detail,
     _validator_boundary,
 )
@@ -177,3 +178,28 @@ def test_doctor_checks_each_persisted_worktree_as_agent_identity(tmp_path, monke
     assert ((worktree / ".git").resolve(), 0o4) in checked
     assert (git_dir.parent.parent.resolve(), 0o5) in checked
     assert (git_dir.resolve(), 0o5) in checked
+
+
+def test_doctor_reports_idea_hash_state_publication_and_question() -> None:
+    config = SimpleNamespace(ideas=SimpleNamespace(repositories=("solo/idea",)))
+    project = SimpleNamespace(
+        repository="solo/idea",
+        latest_observed_spec_hash="latest-hash",
+        latest_completed_spec_hash="completed-hash",
+    )
+    run = SimpleNamespace(
+        repository="solo/idea",
+        state=SimpleNamespace(value="question"),
+        published_commit="published-commit",
+        question="Which option?",
+    )
+    store = SimpleNamespace(list_idea_projects=lambda: [project], list_idea_runs=lambda: [run])
+
+    check = _idea_project_checks(config, store)[0]
+
+    assert check.ok
+    assert not check.required
+    assert "latest=latest-hash" in check.detail
+    assert "completed=completed-hash" in check.detail
+    assert "publication=published-commit" in check.detail
+    assert "question=Which option?" in check.detail

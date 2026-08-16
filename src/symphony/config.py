@@ -130,7 +130,14 @@ def _validation_commands(value: Any) -> tuple[tuple[str, ...], ...]:
 
 def _repository_path(value: str, name: str) -> str:
     path = Path(value)
-    if not value or path.is_absolute() or ".." in path.parts or path.as_posix() != value:
+    if (
+        not value
+        or path == Path(".")
+        or path.is_absolute()
+        or ".." in path.parts
+        or path.parts[0] == ".git"
+        or path.as_posix() != value
+    ):
         raise ValueError(f"ideas.{name} must be a confined repository-relative POSIX path")
     return value
 

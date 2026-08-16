@@ -92,6 +92,6 @@ def git_blob_hash(content: bytes) -> str:
 
 def safe_path(value: str) -> str:
     path = Path(value)
-    if path.is_absolute() or ".." in path.parts:
+    if not value or path == Path(".") or path.is_absolute() or ".." in path.parts or path.parts[0] == ".git":
         raise IdeaContractError("idea path escapes the repository")
     return path.as_posix()

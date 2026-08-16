@@ -14,8 +14,8 @@ def main() -> None:
     parser.add_argument("--config", help="path to config.toml")
     args = parser.parse_args()
     config, store, coordinator = build_coordinator(args.config)
-    scheduler = Scheduler(config, store, coordinator)
-    app = create_app(store, coordinator, scheduler, config.service.webhook_secret_file)
+    scheduler = Scheduler(config, store, coordinator, coordinator.ideas)
+    app = create_app(store, coordinator, scheduler, config.service.webhook_secret_file, coordinator.ideas)
     uvicorn.run(app, host=config.service.listen_host, port=config.service.listen_port, log_level="info")
 
 

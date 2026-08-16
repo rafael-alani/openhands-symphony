@@ -4,14 +4,21 @@ from pathlib import Path
 
 from .config import Config, load_config
 from .coordinator import Coordinator
+from .execution import ProviderSlots
 from .github import GhCLIBackend
+from .ideas_coordinator import IdeasCoordinator
+from .ideas_github import GhIdeasBackend
 from .providers.base import ProviderAdapter
 from .providers.openhands import OpenHandsACPProvider
 from .store import Store
 
 
 def validate_operational_config(config: Config) -> None:
-    placeholders = [repository for repository in config.github.allowed_repositories if "CHANGE_ME" in repository]
+    placeholders = [
+        repository
+        for repository in (*config.github.allowed_repositories, *config.ideas.repositories)
+        if "CHANGE_ME" in repository
+    ]
     if placeholders:
         raise ValueError(
             "replace CHANGE_ME/CHANGE_ME in both github.allowed_repositories and the matching "
@@ -47,5 +54,14 @@ def build_coordinator(config_path: str | Path | None = None) -> tuple[Config, St
         private_only=config.github.private_only,
         bot_login=config.github.bot_login,
     )
-    coordinator = Coordinator(config, store, github, build_providers(config))
+    providers = build_providers(config)
+    provider_slots = ProviderSlots(config.scheduler.provider_concurrency, set(providers))
+    coordinator = Coordinator(config, store, github, providers, provider_slots)
+    coordinator.ideas = IdeasCoordinator(
+        config,
+        store,
+        GhIdeasBackend(config.ideas.repositories, private_only=config.ideas.private_only),
+        providers,
+        provider_slots,
+    )
     return config, store, coordinator

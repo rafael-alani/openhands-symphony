@@ -10,6 +10,8 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request
 
 from .coordinator import Coordinator, IntakeError
+from .github import GitHubError
+from .ideas_coordinator import IdeasCoordinator, IdeasIntakeError
 from .intake import TRUSTED_ASSOCIATIONS
 from .scheduler import Scheduler
 from .store import Store
@@ -27,6 +29,7 @@ def create_app(
     coordinator: Coordinator,
     scheduler: Scheduler,
     secret_file: Path,
+    ideas: IdeasCoordinator | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -72,6 +75,31 @@ def create_app(
         )
         if not inserted:
             return {"accepted": True, "duplicate": True}
+        if x_github_event == "push" and repository and ideas:
+            repo_payload = payload.get("repository") or {}
+            default_branch = str(repo_payload.get("default_branch") or "")
+            if repository not in ideas.config.ideas.repositories:
+                return {"accepted": True, "ignored": "repository is not ideas-allowlisted"}
+            if repo_payload.get("private") is not True:
+                return {"accepted": True, "ignored": "ideas repository is not private"}
+            if str(payload.get("ref") or "") != f"refs/heads/{default_branch}":
+                return {"accepted": True, "ignored": "push is not for the default branch"}
+            changed: set[str] = set()
+            for commit in payload.get("commits") or []:
+                if not isinstance(commit, dict):
+                    continue
+                for key in ("added", "modified", "removed"):
+                    changed.update(str(path) for path in commit.get(key) or [])
+            commits = payload.get("commits") or []
+            truncated = int(payload.get("size") or len(commits)) > len(commits)
+            if ideas.config.ideas.spec_path not in changed and not truncated:
+                return {"accepted": True, "ignored": "idea spec path did not change"}
+            try:
+                run, created = ideas.observe_repository(repository)
+                scheduler.tick()
+                return {"accepted": True, "created": created, "idea_run_id": run.id}
+            except (IdeasIntakeError, GitHubError) as exc:
+                return {"accepted": True, "ineligible": str(exc)}
         if not repository or not issue_number:
             return {"accepted": True, "ignored": "event has no issue"}
 

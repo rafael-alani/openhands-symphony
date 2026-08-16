@@ -39,6 +39,7 @@ class Coordinator:
         store: Store,
         github: GitHubBackend,
         providers: dict[str, ProviderAdapter],
+        provider_slots: ProviderSlots | None = None,
     ):
         self.config = config
         self.store = store
@@ -49,7 +50,7 @@ class Coordinator:
         self._active_runs: dict[str, tuple[ProviderAdapter, ProviderRun]] = {}
         self._active_lock = threading.Lock()
         self._operation_owner = f"coordinator:{uuid.uuid4()}"
-        self.provider_slots = ProviderSlots(config.scheduler.provider_concurrency, set(providers))
+        self.provider_slots = provider_slots or ProviderSlots(config.scheduler.provider_concurrency, set(providers))
 
     def _available_reviewers(self) -> set[str]:
         candidates: set[str] = set()

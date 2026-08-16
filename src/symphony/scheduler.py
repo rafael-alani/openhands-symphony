@@ -9,17 +9,25 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 from .config import Config
 from .coordinator import Coordinator
-from .models import Job
+from .ideas_coordinator import IdeasCoordinator
+from .models import IdeaRun, Job
 from .store import Store
 
 
 class Scheduler:
     """Work-conserving, fair-enough scheduler backed by transactional SQLite leases."""
 
-    def __init__(self, config: Config, store: Store, coordinator: Coordinator):
+    def __init__(
+        self,
+        config: Config,
+        store: Store,
+        coordinator: Coordinator,
+        ideas: IdeasCoordinator | None = None,
+    ):
         self.config = config
         self.store = store
         self.coordinator = coordinator
+        self.ideas = ideas
         self.owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -27,9 +35,10 @@ class Scheduler:
             max_workers=config.scheduler.global_concurrency,
             thread_name_prefix="symphony-worker",
         )
-        self._futures: dict[Future[Job], str] = {}
+        self._futures: dict[Future[Job | IdeaRun], str] = {}
         self._lock = threading.Lock()
         self._last_reconcile = 0.0
+        self._prefer_ideas = False
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -59,6 +68,8 @@ class Scheduler:
         now = time.monotonic()
         if reconcile or now - self._last_reconcile >= self.config.scheduler.reconcile_seconds:
             self.coordinator.reconcile()
+            if self.ideas:
+                self.ideas.reconcile()
             self._last_reconcile = now
         started = 0
         while True:
@@ -66,22 +77,42 @@ class Scheduler:
                 available = self.config.scheduler.global_concurrency - len(self._futures)
             if available <= 0:
                 break
-            job = self.store.claim_next(
-                self.owner,
-                self.config.scheduler.lease_seconds,
-                self.config.scheduler.global_concurrency,
-                self.config.scheduler.provider_concurrency,
-            )
-            if job is None:
+            claimed: Job | IdeaRun | None = None
+            is_idea = False
+            order = ("idea", "issue") if self._prefer_ideas and self.ideas else ("issue", "idea")
+            for kind in order:
+                if kind == "idea" and self.ideas:
+                    claimed = self.store.claim_next_idea(
+                        self.owner,
+                        self.config.scheduler.lease_seconds,
+                        self.config.scheduler.global_concurrency,
+                        self.config.scheduler.provider_concurrency,
+                    )
+                    is_idea = claimed is not None
+                elif kind == "issue":
+                    claimed = self.store.claim_next(
+                        self.owner,
+                        self.config.scheduler.lease_seconds,
+                        self.config.scheduler.global_concurrency,
+                        self.config.scheduler.provider_concurrency,
+                    )
+                    is_idea = False
+                if claimed is not None:
+                    break
+            if claimed is None:
                 break
-            future = self._executor.submit(self.coordinator.run_claimed, job)
+            target = self.ideas.run_claimed if is_idea and self.ideas else self.coordinator.run_claimed
+            future = self._executor.submit(target, claimed)
             with self._lock:
-                self._futures[future] = job.id
+                self._futures[future] = claimed.id
+            self._prefer_ideas = not is_idea
             started += 1
         return started
 
     def _loop(self) -> None:
         self.coordinator.recover_expired_leases()
+        if self.ideas:
+            self.ideas.recover_expired_leases()
         while not self._stop.is_set():
             self.tick()
             self._stop.wait(self.config.scheduler.poll_seconds)

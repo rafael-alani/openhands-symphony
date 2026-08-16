@@ -730,6 +730,18 @@ class Store:
             ).fetchall()
         return [self._job(row) for row in rows if row is not None]
 
+    def expired_idea_lease_runs(self) -> list[IdeaRun]:
+        now = utcnow()
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.* FROM leases l JOIN idea_runs r ON r.id=l.run_id
+                WHERE l.run_kind=? AND l.expires_at<=? ORDER BY r.created_at
+                """,
+                (IDEA_RUN_KIND, now),
+            ).fetchall()
+        return [self._idea_run(row) for row in rows if row is not None]
+
     def reap_expired_leases(self, job_ids: set[str] | None = None) -> list[str]:
         now = utcnow()
         recovered: list[str] = []

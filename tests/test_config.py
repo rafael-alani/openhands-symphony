@@ -88,3 +88,19 @@ def test_config_rejects_repository_in_both_tier_allowlists(tmp_path):
 
     with pytest.raises(ValueError, match="both Tier 1 and ideas allowlists"):
         load_config(path)
+
+
+def test_config_loads_disjoint_private_ideas_allowlist_and_paths(tmp_path):
+    path = _config(tmp_path / "config.toml")
+    path.write_text(
+        path.read_text()
+        + '\n[ideas]\nrepositories = ["solo/idea"]\nspec_path = "product/WISHES.md"\n'
+        + 'progress_path = "product/RESULTS.md"\n\n[repositories."solo/idea"]\n'
+        + 'validation_commands = [["python3", "-m", "pytest"]]\n'
+    )
+
+    config = load_config(path)
+
+    assert config.ideas.repositories == ("solo/idea",)
+    assert config.ideas.spec_path == "product/WISHES.md"
+    assert config.repository("solo/idea").validation_commands == (("python3", "-m", "pytest"),)

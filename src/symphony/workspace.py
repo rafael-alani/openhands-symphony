@@ -11,6 +11,7 @@ from .models import IssueSnapshot, Job, ValidationResult
 from .validation import SENSITIVE_ENV, redact, run_validation, validation_argv, validation_environment
 
 __all__ = [
+    "NonFastForwardError",
     "WorkspaceError",
     "WorkspaceManager",
     "SENSITIVE_ENV",
@@ -23,6 +24,10 @@ __all__ = [
 
 
 class WorkspaceError(RuntimeError):
+    pass
+
+
+class NonFastForwardError(WorkspaceError):
     pass
 
 
@@ -109,7 +114,15 @@ class WorkspaceManager:
             base_branch=snapshot.default_branch,
         )
 
-    def checkout_run(self, *, run_id: str, repository: str, branch: str, base_branch: str) -> Path:
+    def checkout_run(
+        self,
+        *,
+        run_id: str,
+        repository: str,
+        branch: str,
+        base_branch: str,
+        base_revision: str | None = None,
+    ) -> Path:
         key = self._repo_key(repository)
         repository_dir = self._inside(self.root / "repositories" / key)
         worktree = self._inside(self.root / "runs" / run_id)
@@ -188,7 +201,7 @@ class WorkspaceManager:
                     "-b",
                     branch,
                     str(worktree),
-                    f"origin/{base_branch}",
+                    base_revision or f"origin/{base_branch}",
                 ],
                 timeout=300,
             )
@@ -410,6 +423,52 @@ class WorkspaceManager:
             timeout=900,
             env=orchestrator_environment(),
         )
+
+    @staticmethod
+    def fetch(worktree: Path, repository: str) -> None:
+        WorkspaceManager.github_remote(repository)
+        _run(
+            ["git", "fetch", "--prune", "origin"],
+            cwd=worktree,
+            timeout=900,
+            env=orchestrator_environment(),
+        )
+
+    @staticmethod
+    def head(worktree: Path) -> str:
+        return _run(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
+
+    @staticmethod
+    def origin_head(worktree: Path, default_branch: str) -> str:
+        return _run(["git", "rev-parse", f"origin/{default_branch}"], cwd=worktree).stdout.strip()
+
+    @staticmethod
+    def rebase_onto_origin(worktree: Path, default_branch: str) -> None:
+        _run(
+            ["git", "-c", "core.hooksPath=/dev/null", "rebase", f"origin/{default_branch}"],
+            cwd=worktree,
+            timeout=900,
+        )
+
+    @staticmethod
+    def push_default(worktree: Path, repository: str, default_branch: str) -> None:
+        remote = WorkspaceManager.github_remote(repository)
+        process = subprocess.run(
+            ["git", "push", remote, f"HEAD:refs/heads/{default_branch}"],
+            cwd=worktree,
+            env=orchestrator_environment(),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=900,
+            check=False,
+        )
+        if process.returncode == 0:
+            return
+        detail = redact(process.stdout)
+        if "non-fast-forward" in detail.lower() or "fetch first" in detail.lower() or "rejected" in detail.lower():
+            raise NonFastForwardError(f"default branch moved: {detail}")
+        raise WorkspaceError(f"command failed ({process.returncode}): git: {detail}")
 
     @staticmethod
     def github_remote(repository: str) -> str:

@@ -80,3 +80,11 @@ def test_example_config_bootstraps_repository_owned_validation() -> None:
 def test_operational_config_rejects_example_repository_placeholder() -> None:
     with pytest.raises(ValueError, match="replace CHANGE_ME/CHANGE_ME"):
         build_coordinator(EXAMPLE_CONFIG)
+
+
+def test_config_rejects_repository_in_both_tier_allowlists(tmp_path):
+    path = _config(tmp_path / "config.toml")
+    path.write_text(path.read_text() + '\n[ideas]\nrepositories = ["solo/project"]\n')
+
+    with pytest.raises(ValueError, match="both Tier 1 and ideas allowlists"):
+        load_config(path)

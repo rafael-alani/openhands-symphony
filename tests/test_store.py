@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 from conftest import issue
 
 from symphony.intake import branch_name
-from symphony.models import JobState
-from symphony.store import Store
+from symphony.models import IdeaRunState, IdeaSnapshot, JobState
+from symphony.store import SCHEMA_VERSION, Store
 
 
 def _add(store: Store, snapshot, key: str | None = None):
@@ -40,7 +40,7 @@ def test_fresh_database_uses_source_neutral_repository_leases(tmp_path):
 
     assert {"run_kind", "run_id", "repository", "provider"} <= columns
     assert "job_id" not in columns
-    assert version == 4
+    assert version == SCHEMA_VERSION
 
 
 def test_v3_migration_preserves_active_lease_and_is_idempotent(tmp_path):
@@ -82,6 +82,63 @@ def test_v3_migration_preserves_active_lease_and_is_idempotent(tmp_path):
     assert lease["repository"] == original.repository
     assert lease["provider"] == original.implementation_provider
     assert migrated.get_job_by_id(original.id).lease_owner == "worker-a"
+
+
+def _idea_snapshot(spec_hash: str = "spec-one") -> IdeaSnapshot:
+    return IdeaSnapshot(
+        repository="solo/idea",
+        spec_hash=spec_hash,
+        spec_content=b"---\nsymphony: idea\nrepo: solo/idea\n---\n\n## Wish\n\nBuild it.\n",
+        runtime_content=(
+            b'provider = "codex"\n[preview]\nstart = ["python3", "-m", "app"]\n'
+            b'port = 4317\nhealth_path = "/health"\nstartup_timeout_seconds = 20\n'
+        ),
+        previous_progress=b"",
+        base_commit="a" * 40,
+        default_branch="main",
+    )
+
+
+def test_duplicate_idea_spec_hash_coalesces_to_one_run(tmp_path):
+    store = Store(tmp_path / "state.db")
+
+    first, created, _ = store.ensure_idea_run(_idea_snapshot(), "codex")
+    duplicate, duplicate_created, _ = store.ensure_idea_run(_idea_snapshot(), "codex")
+
+    assert created
+    assert not duplicate_created
+    assert first.id == duplicate.id
+    assert len(store.list_idea_runs()) == 1
+
+
+def test_new_idea_revision_supersedes_running_run_but_keeps_lease_until_canceled(tmp_path):
+    store = Store(tmp_path / "state.db")
+    first, _, _ = store.ensure_idea_run(_idea_snapshot(), "codex")
+    claimed = store.claim_next_idea("worker-a", 60, 2, {"codex": 2})
+    assert claimed and claimed.id == first.id
+
+    second, created, superseded = store.ensure_idea_run(_idea_snapshot("spec-two"), "codex")
+
+    assert created
+    assert [run.id for run in superseded] == [first.id]
+    assert store.get_idea_run_by_id(first.id).state == IdeaRunState.SUPERSEDED
+    assert store.claim_next_idea("worker-b", 60, 2, {"codex": 2}) is None
+    store.release_idea_lease(first.id)
+    next_run = store.claim_next_idea("worker-b", 60, 2, {"codex": 2})
+    assert next_run and next_run.id == second.id
+
+
+def test_issue_and_idea_claims_share_global_and_provider_capacity(tmp_path):
+    store = Store(tmp_path / "state.db")
+    issue_job = _add(store, issue())
+    store.ensure_idea_run(_idea_snapshot(), "codex")
+
+    claimed_issue = store.claim_next("issue-worker", 60, 2, {"codex": 1})
+
+    assert claimed_issue and claimed_issue.id == issue_job.id
+    assert store.claim_next_idea("idea-worker", 60, 2, {"codex": 1}) is None
+    store.transition(issue_job.id, JobState.PR_OPEN)
+    assert store.claim_next_idea("idea-worker", 60, 2, {"codex": 1}) is not None
 
 
 def test_restart_recovers_expired_lease_without_duplicate(tmp_path):

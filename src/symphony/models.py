@@ -28,6 +28,19 @@ TERMINAL_STATES = {JobState.BLOCKED, JobState.FAILED, JobState.CANCELED, JobStat
 ACTIVE_STATES = {JobState.RUNNING, JobState.REVIEWING}
 
 
+class IdeaRunState(StrEnum):
+    DISCOVERED = "discovered"
+    QUEUED = "queued"
+    RUNNING = "running"
+    PUBLISHED = "published"
+    QUESTION = "question"
+    FAILED = "failed"
+    SUPERSEDED = "superseded"
+
+
+IDEA_ACTIVE_STATES = {IdeaRunState.DISCOVERED, IdeaRunState.QUEUED, IdeaRunState.RUNNING}
+
+
 @dataclass(frozen=True)
 class IssueSnapshot:
     repository: str
@@ -56,6 +69,59 @@ class IssueSnapshot:
         data = json.loads(value)
         data["labels"] = tuple(data["labels"])
         return cls(**data)
+
+
+@dataclass(frozen=True)
+class IdeaSnapshot:
+    repository: str
+    spec_hash: str
+    spec_content: bytes
+    runtime_content: bytes
+    previous_progress: bytes
+    base_commit: str
+    default_branch: str
+    private: bool = True
+
+
+@dataclass
+class IdeaProject:
+    repository: str
+    latest_observed_spec_hash: str | None
+    latest_completed_spec_hash: str | None
+    last_good_preview_commit: str | None
+    preview_state: str
+    updated_at: str
+
+
+@dataclass
+class IdeaRun:
+    id: str
+    repository: str
+    spec_hash: str
+    spec_content: bytes
+    runtime_content: bytes
+    previous_progress: bytes
+    base_commit: str
+    default_branch: str
+    implementation_provider: str
+    state: IdeaRunState
+    attempt: int
+    worktree: str | None
+    conversation_id: str | None
+    session_id: str | None
+    phase: str
+    validation_summary: str
+    question: str
+    published_commit: str | None
+    lease_owner: str | None
+    lease_expires_at: str | None
+    created_at: str
+    updated_at: str
+    started_at: str | None
+    heartbeat_at: str | None
+    finished_at: str | None
+    retry_requested: bool
+    cancel_requested: bool
 
 
 @dataclass

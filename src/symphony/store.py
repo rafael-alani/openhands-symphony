@@ -10,10 +10,23 @@ from pathlib import Path
 from typing import Any
 
 from .execution import ExecutionRef, RepositoryLeases
-from .models import ACTIVE_STATES, IssueSnapshot, Job, JobState, ValidationResult, utcnow
+from .models import (
+    ACTIVE_STATES,
+    IDEA_ACTIVE_STATES,
+    IdeaProject,
+    IdeaRun,
+    IdeaRunState,
+    IdeaSnapshot,
+    IssueSnapshot,
+    Job,
+    JobState,
+    ValidationResult,
+    utcnow,
+)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 ISSUE_RUN_KIND = "github-issue"
+IDEA_RUN_KIND = "idea-spec"
 
 ALLOWED_TRANSITIONS: dict[JobState, set[JobState]] = {
     JobState.QUEUED: {
@@ -39,6 +52,22 @@ ALLOWED_TRANSITIONS: dict[JobState, set[JobState]] = {
     JobState.FAILED: {JobState.QUEUED, JobState.CANCELED},
     JobState.CANCELED: {JobState.QUEUED},
     JobState.DONE: set(),
+}
+
+IDEA_ALLOWED_TRANSITIONS: dict[IdeaRunState, set[IdeaRunState]] = {
+    IdeaRunState.DISCOVERED: {IdeaRunState.QUEUED, IdeaRunState.FAILED, IdeaRunState.SUPERSEDED},
+    IdeaRunState.QUEUED: {IdeaRunState.RUNNING, IdeaRunState.FAILED, IdeaRunState.SUPERSEDED},
+    IdeaRunState.RUNNING: {
+        IdeaRunState.QUEUED,
+        IdeaRunState.PUBLISHED,
+        IdeaRunState.QUESTION,
+        IdeaRunState.FAILED,
+        IdeaRunState.SUPERSEDED,
+    },
+    IdeaRunState.PUBLISHED: set(),
+    IdeaRunState.QUESTION: set(),
+    IdeaRunState.FAILED: {IdeaRunState.QUEUED},
+    IdeaRunState.SUPERSEDED: set(),
 }
 
 
@@ -187,6 +216,68 @@ class Store:
                         owner TEXT NOT NULL,
                         expires_at TEXT NOT NULL
                     );
+
+                    CREATE TABLE idea_projects (
+                        repository TEXT PRIMARY KEY,
+                        latest_observed_spec_hash TEXT,
+                        latest_completed_spec_hash TEXT,
+                        last_good_preview_commit TEXT,
+                        preview_state TEXT NOT NULL DEFAULT 'unknown',
+                        updated_at TEXT NOT NULL
+                    );
+
+                    CREATE TABLE idea_runs (
+                        id TEXT PRIMARY KEY,
+                        repository TEXT NOT NULL REFERENCES idea_projects(repository) ON DELETE CASCADE,
+                        spec_hash TEXT NOT NULL,
+                        spec_content BLOB NOT NULL,
+                        runtime_content BLOB NOT NULL,
+                        previous_progress BLOB NOT NULL,
+                        base_commit TEXT NOT NULL,
+                        default_branch TEXT NOT NULL,
+                        implementation_provider TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        attempt INTEGER NOT NULL DEFAULT 0,
+                        worktree TEXT,
+                        conversation_id TEXT,
+                        session_id TEXT,
+                        phase TEXT NOT NULL DEFAULT 'discovered',
+                        validation_summary TEXT NOT NULL DEFAULT '',
+                        question TEXT NOT NULL DEFAULT '',
+                        published_commit TEXT,
+                        lease_owner TEXT,
+                        lease_expires_at TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        started_at TEXT,
+                        heartbeat_at TEXT,
+                        finished_at TEXT,
+                        retry_requested INTEGER NOT NULL DEFAULT 0,
+                        cancel_requested INTEGER NOT NULL DEFAULT 0,
+                        UNIQUE(repository, spec_hash)
+                    );
+                    CREATE INDEX idea_runs_queue_idx ON idea_runs(state, retry_requested DESC, created_at);
+                    CREATE INDEX idea_runs_provider_idx ON idea_runs(implementation_provider, state);
+
+                    CREATE TABLE idea_run_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        run_id TEXT NOT NULL REFERENCES idea_runs(id) ON DELETE CASCADE,
+                        at TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        detail_json TEXT NOT NULL
+                    );
+
+                    CREATE TABLE idea_validation_results (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        run_id TEXT NOT NULL REFERENCES idea_runs(id) ON DELETE CASCADE,
+                        attempt INTEGER NOT NULL,
+                        command_json TEXT NOT NULL,
+                        exit_code INTEGER,
+                        started_at TEXT NOT NULL,
+                        finished_at TEXT NOT NULL,
+                        output TEXT NOT NULL,
+                        timed_out INTEGER NOT NULL DEFAULT 0
+                    );
                     """
                 )
                 connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
@@ -211,6 +302,8 @@ class Store:
                     )
                 if version < 4:
                     self._migrate_source_neutral_leases(connection)
+                if version < 5:
+                    self._migrate_ideas_tables(connection)
                 connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @staticmethod
@@ -251,6 +344,79 @@ class Store:
         connection.execute("CREATE INDEX IF NOT EXISTS leases_provider_idx ON leases(provider, expires_at)")
 
     @staticmethod
+    def _migrate_ideas_tables(connection: sqlite3.Connection) -> None:
+        statements = (
+            """
+            CREATE TABLE IF NOT EXISTS idea_projects (
+                repository TEXT PRIMARY KEY,
+                latest_observed_spec_hash TEXT,
+                latest_completed_spec_hash TEXT,
+                last_good_preview_commit TEXT,
+                preview_state TEXT NOT NULL DEFAULT 'unknown',
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS idea_runs (
+                id TEXT PRIMARY KEY,
+                repository TEXT NOT NULL REFERENCES idea_projects(repository) ON DELETE CASCADE,
+                spec_hash TEXT NOT NULL,
+                spec_content BLOB NOT NULL,
+                runtime_content BLOB NOT NULL,
+                previous_progress BLOB NOT NULL,
+                base_commit TEXT NOT NULL,
+                default_branch TEXT NOT NULL,
+                implementation_provider TEXT NOT NULL,
+                state TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                worktree TEXT,
+                conversation_id TEXT,
+                session_id TEXT,
+                phase TEXT NOT NULL DEFAULT 'discovered',
+                validation_summary TEXT NOT NULL DEFAULT '',
+                question TEXT NOT NULL DEFAULT '',
+                published_commit TEXT,
+                lease_owner TEXT,
+                lease_expires_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                heartbeat_at TEXT,
+                finished_at TEXT,
+                retry_requested INTEGER NOT NULL DEFAULT 0,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(repository, spec_hash)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idea_runs_queue_idx ON idea_runs(state, retry_requested DESC, created_at)",
+            "CREATE INDEX IF NOT EXISTS idea_runs_provider_idx ON idea_runs(implementation_provider, state)",
+            """
+            CREATE TABLE IF NOT EXISTS idea_run_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL REFERENCES idea_runs(id) ON DELETE CASCADE,
+                at TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                detail_json TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS idea_validation_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL REFERENCES idea_runs(id) ON DELETE CASCADE,
+                attempt INTEGER NOT NULL,
+                command_json TEXT NOT NULL,
+                exit_code INTEGER,
+                started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL,
+                output TEXT NOT NULL,
+                timed_out INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+        )
+        for statement in statements:
+            connection.execute(statement)
+
+    @staticmethod
     def _job(row: sqlite3.Row | None) -> Job | None:
         if row is None:
             return None
@@ -259,6 +425,23 @@ class Store:
         for key in ("review_required", "retry_requested", "cancel_requested", "pause_requested"):
             data[key] = bool(data[key])
         return Job(**data)
+
+    @staticmethod
+    def _idea_run(row: sqlite3.Row | None) -> IdeaRun | None:
+        if row is None:
+            return None
+        data = dict(row)
+        data["state"] = IdeaRunState(data["state"])
+        data["spec_content"] = bytes(data["spec_content"])
+        data["runtime_content"] = bytes(data["runtime_content"])
+        data["previous_progress"] = bytes(data["previous_progress"])
+        for key in ("retry_requested", "cancel_requested"):
+            data[key] = bool(data[key])
+        return IdeaRun(**data)
+
+    @staticmethod
+    def _idea_project(row: sqlite3.Row | None) -> IdeaProject | None:
+        return IdeaProject(**dict(row)) if row is not None else None
 
     def get_job(self, repository: str, issue_number: int) -> Job | None:
         with self.connect() as connection:
@@ -283,6 +466,146 @@ class Store:
             else:
                 rows = connection.execute("SELECT * FROM jobs ORDER BY created_at").fetchall()
             return [self._job(row) for row in rows if row is not None]
+
+    def get_idea_project(self, repository: str) -> IdeaProject | None:
+        with self.connect() as connection:
+            return self._idea_project(
+                connection.execute("SELECT * FROM idea_projects WHERE repository=?", (repository,)).fetchone()
+            )
+
+    def list_idea_projects(self) -> list[IdeaProject]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM idea_projects ORDER BY repository").fetchall()
+        return [self._idea_project(row) for row in rows if row is not None]
+
+    def get_idea_run(self, repository: str, spec_hash: str) -> IdeaRun | None:
+        with self.connect() as connection:
+            return self._idea_run(
+                connection.execute(
+                    "SELECT * FROM idea_runs WHERE repository=? AND spec_hash=?", (repository, spec_hash)
+                ).fetchone()
+            )
+
+    def get_idea_run_by_id(self, run_id: str) -> IdeaRun | None:
+        with self.connect() as connection:
+            return self._idea_run(connection.execute("SELECT * FROM idea_runs WHERE id=?", (run_id,)).fetchone())
+
+    def list_idea_runs(self, states: set[IdeaRunState] | None = None) -> list[IdeaRun]:
+        with self.connect() as connection:
+            if states:
+                placeholders = ",".join("?" for _ in states)
+                rows = connection.execute(
+                    f"SELECT * FROM idea_runs WHERE state IN ({placeholders}) ORDER BY created_at",
+                    tuple(str(state) for state in states),
+                ).fetchall()
+            else:
+                rows = connection.execute("SELECT * FROM idea_runs ORDER BY created_at").fetchall()
+        return [self._idea_run(row) for row in rows if row is not None]
+
+    def ensure_idea_run(
+        self, snapshot: IdeaSnapshot, implementation_provider: str
+    ) -> tuple[IdeaRun, bool, list[IdeaRun]]:
+        now = utcnow()
+        run_id = str(uuid.uuid4())
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO idea_projects(repository, latest_observed_spec_hash, preview_state, updated_at)
+                VALUES (?, ?, 'unknown', ?)
+                ON CONFLICT(repository) DO UPDATE SET
+                    latest_observed_spec_hash=excluded.latest_observed_spec_hash,
+                    updated_at=excluded.updated_at
+                """,
+                (snapshot.repository, snapshot.spec_hash, now),
+            )
+            existing = connection.execute(
+                "SELECT * FROM idea_runs WHERE repository=? AND spec_hash=?",
+                (snapshot.repository, snapshot.spec_hash),
+            ).fetchone()
+            if existing:
+                return self._idea_run(existing), False, []  # type: ignore[return-value]
+            older_rows = connection.execute(
+                """
+                SELECT * FROM idea_runs WHERE repository=? AND state IN (?, ?, ?)
+                ORDER BY created_at
+                """,
+                (
+                    snapshot.repository,
+                    IdeaRunState.DISCOVERED,
+                    IdeaRunState.QUEUED,
+                    IdeaRunState.RUNNING,
+                ),
+            ).fetchall()
+            older = [self._idea_run(row) for row in older_rows if row is not None]
+            for previous in older:
+                if previous is None:
+                    continue
+                connection.execute(
+                    """
+                    UPDATE idea_runs SET state=?, phase='superseded', cancel_requested=1,
+                        updated_at=?, finished_at=? WHERE id=?
+                    """,
+                    (IdeaRunState.SUPERSEDED, now, now, previous.id),
+                )
+                connection.execute(
+                    "INSERT INTO idea_run_events(run_id, at, kind, detail_json) VALUES (?, ?, 'superseded', ?)",
+                    (previous.id, now, json.dumps({"new_spec_hash": snapshot.spec_hash}, sort_keys=True)),
+                )
+            connection.execute(
+                """
+                INSERT INTO idea_runs(
+                    id, repository, spec_hash, spec_content, runtime_content, previous_progress,
+                    base_commit, default_branch, implementation_provider, state, phase, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'discovered', ?, ?)
+                """,
+                (
+                    run_id,
+                    snapshot.repository,
+                    snapshot.spec_hash,
+                    snapshot.spec_content,
+                    snapshot.runtime_content,
+                    snapshot.previous_progress,
+                    snapshot.base_commit,
+                    snapshot.default_branch,
+                    implementation_provider,
+                    IdeaRunState.DISCOVERED,
+                    now,
+                    now,
+                ),
+            )
+            connection.execute(
+                "INSERT INTO idea_run_events(run_id, at, kind, detail_json) VALUES (?, ?, 'discovered', ?)",
+                (run_id, now, json.dumps({"spec_hash": snapshot.spec_hash}, sort_keys=True)),
+            )
+            connection.execute(
+                "UPDATE idea_runs SET state=?, phase='queued', updated_at=? WHERE id=?",
+                (IdeaRunState.QUEUED, now, run_id),
+            )
+            connection.execute(
+                "INSERT INTO idea_run_events(run_id, at, kind, detail_json) VALUES (?, ?, 'transition', ?)",
+                (
+                    run_id,
+                    now,
+                    json.dumps(
+                        {"from": str(IdeaRunState.DISCOVERED), "to": str(IdeaRunState.QUEUED), "phase": "queued"},
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            row = connection.execute("SELECT * FROM idea_runs WHERE id=?", (run_id,)).fetchone()
+            return self._idea_run(row), True, [value for value in older if value is not None]  # type: ignore[return-value]
+
+    def last_completed_idea_run(self, repository: str) -> IdeaRun | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT r.* FROM idea_projects p
+                JOIN idea_runs r ON r.repository=p.repository AND r.spec_hash=p.latest_completed_spec_hash
+                WHERE p.repository=?
+                """,
+                (repository,),
+            ).fetchone()
+        return self._idea_run(row)
 
     def ensure_job(
         self,
@@ -546,6 +869,215 @@ class Store:
                 (job_id, now, json.dumps({"owner": owner, "expires_at": lease.expires_at})),
             )
             return self._job(connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+
+    def claim_next_idea(
+        self,
+        owner: str,
+        lease_seconds: int,
+        global_limit: int,
+        provider_limits: dict[str, int],
+    ) -> IdeaRun | None:
+        now_dt = datetime.now(UTC)
+        now = now_dt.isoformat()
+        with self.transaction() as connection:
+            if RepositoryLeases.active_count(connection, now) >= global_limit:
+                return None
+            provider_counts = RepositoryLeases.provider_counts(connection, now)
+            rows = connection.execute(
+                """
+                SELECT r.* FROM idea_runs r
+                LEFT JOIN provider_backoff b ON b.provider=r.implementation_provider AND b.until_at>?
+                WHERE r.state=? AND r.cancel_requested=0 AND b.provider IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM leases l WHERE l.concurrency_key=r.repository
+                  )
+                ORDER BY r.retry_requested DESC, r.updated_at ASC, r.created_at ASC
+                """,
+                (now, IdeaRunState.QUEUED),
+            ).fetchall()
+            chosen: sqlite3.Row | None = None
+            for row in rows:
+                provider = str(row["implementation_provider"])
+                if provider_counts.get(provider, 0) < provider_limits.get(provider, 1):
+                    chosen = row
+                    break
+            if chosen is None:
+                return None
+            run_id = str(chosen["id"])
+            repository = str(chosen["repository"])
+            provider = str(chosen["implementation_provider"])
+            lease = RepositoryLeases.claim(
+                connection,
+                ExecutionRef(IDEA_RUN_KIND, run_id, repository, repository, provider),
+                owner,
+                lease_seconds,
+                now=now_dt,
+            )
+            connection.execute(
+                """
+                UPDATE idea_runs SET state=?, phase='preflight', lease_owner=?, lease_expires_at=?,
+                    heartbeat_at=?, started_at=COALESCE(started_at, ?), updated_at=?, finished_at=NULL
+                WHERE id=?
+                """,
+                (IdeaRunState.RUNNING, owner, lease.expires_at, now, now, now, run_id),
+            )
+            connection.execute(
+                "INSERT INTO idea_run_events(run_id, at, kind, detail_json) VALUES (?, ?, 'claimed', ?)",
+                (run_id, now, json.dumps({"owner": owner, "expires_at": lease.expires_at}, sort_keys=True)),
+            )
+            return self._idea_run(connection.execute("SELECT * FROM idea_runs WHERE id=?", (run_id,)).fetchone())
+
+    def begin_idea_attempt(
+        self,
+        run_id: str,
+        *,
+        conversation_id: str | None = None,
+        session_id: str | None = None,
+    ) -> IdeaRun:
+        now = utcnow()
+        with self.transaction() as connection:
+            row = connection.execute("SELECT state, attempt FROM idea_runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise StoreError(f"unknown idea run: {run_id}")
+            if IdeaRunState(row["state"]) != IdeaRunState.RUNNING:
+                raise StoreError("an idea attempt may only start for a running run")
+            attempt = int(row["attempt"]) + 1
+            connection.execute(
+                """
+                UPDATE idea_runs SET attempt=?, conversation_id=COALESCE(?, conversation_id),
+                    session_id=COALESCE(?, session_id), phase='implementation', retry_requested=0, updated_at=?
+                WHERE id=?
+                """,
+                (attempt, conversation_id, session_id, now, run_id),
+            )
+            connection.execute(
+                "INSERT INTO idea_run_events(run_id, at, kind, detail_json) VALUES (?, ?, 'attempt-started', ?)",
+                (
+                    run_id,
+                    now,
+                    json.dumps(
+                        {"attempt": attempt, "conversation_id": conversation_id, "session_id": session_id},
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            return self._idea_run(
+                connection.execute("SELECT * FROM idea_runs WHERE id=?", (run_id,)).fetchone()
+            )  # type: ignore[return-value]
+
+    def renew_idea_lease(self, run_id: str, owner: str, lease_seconds: int) -> bool:
+        now_dt = datetime.now(UTC)
+        now = now_dt.isoformat()
+        with self.transaction() as connection:
+            expires = RepositoryLeases.renew(
+                connection, IDEA_RUN_KIND, run_id, owner, lease_seconds, now=now_dt
+            )
+            if expires:
+                connection.execute(
+                    "UPDATE idea_runs SET lease_expires_at=?, heartbeat_at=?, updated_at=? WHERE id=?",
+                    (expires, now, now, run_id),
+                )
+            return expires is not None
+
+    def release_idea_lease(self, run_id: str) -> IdeaRun:
+        with self.transaction() as connection:
+            RepositoryLeases.release(connection, IDEA_RUN_KIND, run_id)
+            connection.execute(
+                "UPDATE idea_runs SET lease_owner=NULL, lease_expires_at=NULL, updated_at=? WHERE id=?",
+                (utcnow(), run_id),
+            )
+            row = connection.execute("SELECT * FROM idea_runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise StoreError(f"unknown idea run: {run_id}")
+            return self._idea_run(row)  # type: ignore[return-value]
+
+    def update_idea_run(self, run_id: str, **values: Any) -> IdeaRun:
+        allowed = {
+            "worktree",
+            "conversation_id",
+            "session_id",
+            "phase",
+            "validation_summary",
+            "question",
+            "published_commit",
+            "retry_requested",
+        }
+        invalid = set(values) - allowed
+        if invalid:
+            raise StoreError(f"unsupported idea run fields: {sorted(invalid)}")
+        values["updated_at"] = utcnow()
+        with self.transaction() as connection:
+            assignments = ", ".join(f"{key}=?" for key in values)
+            connection.execute(f"UPDATE idea_runs SET {assignments} WHERE id=?", (*values.values(), run_id))
+            row = connection.execute("SELECT * FROM idea_runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise StoreError(f"unknown idea run: {run_id}")
+            return self._idea_run(row)  # type: ignore[return-value]
+
+    def transition_idea_run(
+        self,
+        run_id: str,
+        new_state: IdeaRunState,
+        *,
+        phase: str | None = None,
+        validation_summary: str | None = None,
+        question: str | None = None,
+        published_commit: str | None = None,
+        release_lease: bool | None = None,
+    ) -> IdeaRun:
+        now = utcnow()
+        with self.transaction() as connection:
+            row = connection.execute("SELECT * FROM idea_runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise StoreError(f"unknown idea run: {run_id}")
+            current = IdeaRunState(row["state"])
+            if new_state != current and new_state not in IDEA_ALLOWED_TRANSITIONS[current]:
+                raise StoreError(f"invalid idea transition: {current} -> {new_state}")
+            fields: dict[str, Any] = {"state": str(new_state), "updated_at": now}
+            if phase is not None:
+                fields["phase"] = phase
+            if validation_summary is not None:
+                fields["validation_summary"] = validation_summary
+            if question is not None:
+                fields["question"] = question
+            if published_commit is not None:
+                fields["published_commit"] = published_commit
+            terminal = new_state not in IDEA_ACTIVE_STATES
+            if terminal:
+                fields["finished_at"] = now
+            should_release = release_lease if release_lease is not None else new_state != IdeaRunState.RUNNING
+            if should_release:
+                fields["lease_owner"] = None
+                fields["lease_expires_at"] = None
+                RepositoryLeases.release(connection, IDEA_RUN_KIND, run_id)
+            assignments = ", ".join(f"{key}=?" for key in fields)
+            connection.execute(f"UPDATE idea_runs SET {assignments} WHERE id=?", (*fields.values(), run_id))
+            detail = {"from": str(current), "to": str(new_state), "phase": phase}
+            connection.execute(
+                "INSERT INTO idea_run_events(run_id, at, kind, detail_json) VALUES (?, ?, 'transition', ?)",
+                (run_id, now, json.dumps(detail, sort_keys=True)),
+            )
+            if new_state in {IdeaRunState.PUBLISHED, IdeaRunState.QUESTION}:
+                preview_state = "healthy" if new_state == IdeaRunState.PUBLISHED else "question"
+                connection.execute(
+                    """
+                    UPDATE idea_projects SET latest_completed_spec_hash=?,
+                        last_good_preview_commit=CASE WHEN ?=? THEN ? ELSE last_good_preview_commit END,
+                        preview_state=?, updated_at=? WHERE repository=?
+                    """,
+                    (
+                        row["spec_hash"],
+                        str(new_state),
+                        str(IdeaRunState.PUBLISHED),
+                        published_commit,
+                        preview_state,
+                        now,
+                        row["repository"],
+                    ),
+                )
+            return self._idea_run(
+                connection.execute("SELECT * FROM idea_runs WHERE id=?", (run_id,)).fetchone()
+            )  # type: ignore[return-value]
 
     def begin_attempt(
         self,
@@ -850,6 +1382,47 @@ class Store:
             connection.execute(
                 "INSERT INTO job_events(job_id, at, kind, detail_json) VALUES (?, ?, ?, ?)",
                 (job_id, utcnow(), kind, json.dumps(detail, sort_keys=True)),
+            )
+
+    def record_idea_validation(self, run_id: str, attempt: int, result: ValidationResult) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO idea_validation_results(
+                    run_id, attempt, command_json, exit_code, started_at, finished_at, output, timed_out
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    attempt,
+                    json.dumps(result.command),
+                    result.exit_code,
+                    result.started_at,
+                    result.finished_at,
+                    result.output,
+                    int(result.timed_out),
+                ),
+            )
+
+    def idea_validations(self, run_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM idea_validation_results WHERE run_id=? ORDER BY id", (run_id,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def idea_events(self, run_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM idea_run_events WHERE run_id=? ORDER BY id", (run_id,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_idea_event(self, run_id: str, kind: str, detail: dict[str, Any]) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                "INSERT INTO idea_run_events(run_id, at, kind, detail_json) VALUES (?, ?, ?, ?)",
+                (run_id, utcnow(), kind, json.dumps(detail, sort_keys=True)),
             )
 
     def set_provider_backoff(self, provider: str, reason: str, seconds: int) -> None:

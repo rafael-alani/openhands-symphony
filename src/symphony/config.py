@@ -37,6 +37,14 @@ class GitHubConfig:
 
 
 @dataclass(frozen=True)
+class IdeasConfig:
+    repositories: tuple[str, ...] = ()
+    private_only: bool = True
+    spec_path: str = "idea/SPEC.md"
+    progress_path: str = "idea/PROGRESS.md"
+
+
+@dataclass(frozen=True)
 class SchedulerConfig:
     poll_seconds: int = 60
     reconcile_seconds: int = 300
@@ -81,6 +89,7 @@ class Config:
     scheduler: SchedulerConfig
     providers: dict[str, ProviderConfig]
     repositories: dict[str, RepositoryConfig]
+    ideas: IdeasConfig = IdeasConfig()
 
     def repository(self, name: str) -> RepositoryConfig:
         return self.repositories.get(name, RepositoryConfig())
@@ -119,6 +128,13 @@ def _validation_commands(value: Any) -> tuple[tuple[str, ...], ...]:
     return tuple(_command(command) for command in value)
 
 
+def _repository_path(value: str, name: str) -> str:
+    path = Path(value)
+    if not value or path.is_absolute() or ".." in path.parts or path.as_posix() != value:
+        raise ValueError(f"ideas.{name} must be a confined repository-relative POSIX path")
+    return value
+
+
 def _validate_config(config: Config) -> None:
     if config.service.listen_host not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("service.listen_host must be loopback; use an SSH tunnel or Tailscale for access")
@@ -135,6 +151,20 @@ def _validate_config(config: Config) -> None:
     for repository in config.github.allowed_repositories:
         if not REPOSITORY_PATTERN.fullmatch(repository) or ".." in repository:
             raise ValueError(f"invalid GitHub repository identifier: {repository!r}")
+    if not config.ideas.private_only:
+        raise ValueError("ideas.private_only must be true; direct pushes to public repositories are forbidden")
+    if len(set(config.ideas.repositories)) != len(config.ideas.repositories):
+        raise ValueError("ideas.repositories contains duplicates")
+    for repository in config.ideas.repositories:
+        if not REPOSITORY_PATTERN.fullmatch(repository) or ".." in repository:
+            raise ValueError(f"invalid ideas repository identifier: {repository!r}")
+    overlap = set(config.github.allowed_repositories) & set(config.ideas.repositories)
+    if overlap:
+        raise ValueError(f"repositories cannot be in both Tier 1 and ideas allowlists: {sorted(overlap)}")
+    _repository_path(config.ideas.spec_path, "spec_path")
+    _repository_path(config.ideas.progress_path, "progress_path")
+    if config.ideas.spec_path == config.ideas.progress_path:
+        raise ValueError("ideas.spec_path and ideas.progress_path must be different")
 
     scheduler = config.scheduler
     positive = {
@@ -172,7 +202,7 @@ def _validate_config(config: Config) -> None:
     if unknown_limits:
         raise ValueError(f"provider concurrency configured for unknown providers: {sorted(unknown_limits)}")
 
-    unknown = set(config.repositories) - set(config.github.allowed_repositories)
+    unknown = set(config.repositories) - (set(config.github.allowed_repositories) | set(config.ideas.repositories))
     if unknown:
         raise ValueError(f"repository configuration is not allowlisted: {sorted(unknown)}")
     for name, repository in config.repositories.items():
@@ -187,6 +217,8 @@ def _validate_config(config: Config) -> None:
                 raise ValueError(f"repositories.{name}.concurrency_labels contains an invalid label: {label!r}")
             if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", key):
                 raise ValueError(f"repositories.{name}.concurrency_labels contains an invalid key: {key!r}")
+        if name in config.ideas.repositories and repository.concurrency_scope == "label":
+            raise ValueError(f"ideas repository {name} cannot use label concurrency scope")
         setup = Path(repository.setup_script)
         if setup.is_absolute() or ".." in setup.parts:
             raise ValueError(f"repositories.{name}.setup_script must be a confined relative path")
@@ -225,6 +257,14 @@ def load_config(path: str | Path | None = None) -> Config:
         auth_mode=str(github_raw.get("auth_mode", "gh")),
         generated_pr_label=str(github_raw.get("generated_pr_label", "generated-by-agent")),
         bot_login=str(github_raw.get("bot_login", "")),
+    )
+
+    ideas_raw = raw.get("ideas", {})
+    ideas = IdeasConfig(
+        repositories=tuple(ideas_raw.get("repositories", [])),
+        private_only=bool(ideas_raw.get("private_only", True)),
+        spec_path=str(ideas_raw.get("spec_path", "idea/SPEC.md")),
+        progress_path=str(ideas_raw.get("progress_path", "idea/PROGRESS.md")),
     )
 
     scheduler_raw = raw.get("scheduler", {})
@@ -272,6 +312,6 @@ def load_config(path: str | Path | None = None) -> Config:
             approval_policy=str(value.get("approval_policy", "safe-code-only")),
         )
 
-    config = Config(service, github, scheduler, providers, repositories)
+    config = Config(service, github, scheduler, providers, repositories, ideas)
     _validate_config(config)
     return config

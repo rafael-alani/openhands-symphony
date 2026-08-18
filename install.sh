@@ -5,6 +5,7 @@ PROJECT_NAME="openhands-symphony"
 SERVICE_USER="openhands-symphony"
 AGENT_USER="openhands-agent"
 VALIDATOR_USER="openhands-validator"
+PREVIEW_USER="openhands-preview"
 SHARED_GROUP="openhands-agents"
 AUTH_GROUP="openhands-operators"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,6 +14,7 @@ CONFIG_DIR="/etc/openhands-symphony"
 STATE_DIR="/var/lib/openhands-symphony"
 AGENT_STATE_DIR="/var/lib/openhands-agent"
 VALIDATOR_STATE_DIR="/var/lib/openhands-validator"
+PREVIEW_STATE_DIR="/var/lib/openhands-preview"
 AUTH_STATUS_DIR="/var/lib/openhands-auth-status"
 LOG_DIR="/var/log/openhands-symphony"
 STACK_WAS_ACTIVE=false
@@ -103,6 +105,9 @@ fi
 if ! getent group "${VALIDATOR_USER}" >/dev/null; then
   groupadd --system "${VALIDATOR_USER}"
 fi
+if ! getent group "${PREVIEW_USER}" >/dev/null; then
+  groupadd --system "${PREVIEW_USER}"
+fi
 if ! id "${SERVICE_USER}" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir "${STATE_DIR}" --gid "${SERVICE_USER}" --groups "${SHARED_GROUP},${AUTH_GROUP}" --shell /bin/bash "${SERVICE_USER}"
 fi
@@ -112,9 +117,13 @@ fi
 if ! id "${VALIDATOR_USER}" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir "${VALIDATOR_STATE_DIR}" --gid "${VALIDATOR_USER}" --groups "${SHARED_GROUP}" --shell /usr/sbin/nologin "${VALIDATOR_USER}"
 fi
-usermod -g "${SERVICE_USER}" -G "${SHARED_GROUP},${AUTH_GROUP}" "${SERVICE_USER}"
+if ! id "${PREVIEW_USER}" >/dev/null 2>&1; then
+  useradd --system --create-home --home-dir "${PREVIEW_STATE_DIR}" --gid "${PREVIEW_USER}" --shell /usr/sbin/nologin "${PREVIEW_USER}"
+fi
+usermod -g "${SERVICE_USER}" -G "${SHARED_GROUP},${AUTH_GROUP},${PREVIEW_USER}" "${SERVICE_USER}"
 usermod -g "${AGENT_USER}" -G "${SHARED_GROUP}" "${AGENT_USER}"
 usermod -g "${VALIDATOR_USER}" -G "${SHARED_GROUP}" "${VALIDATOR_USER}"
+usermod -g "${PREVIEW_USER}" -G "" "${PREVIEW_USER}"
 install -d -o "${SERVICE_USER}" -g "${SHARED_GROUP}" -m 0710 "${STATE_DIR}"
 install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 0700 \
   "${STATE_DIR}/reports" "${STATE_DIR}/github" "${LOG_DIR}"
@@ -125,6 +134,11 @@ install -d -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0700 \
   "${AGENT_STATE_DIR}/browser/xdg-config" "${AGENT_STATE_DIR}/browser/xdg-cache" \
   "${AGENT_STATE_DIR}/browser/xdg-data"
 install -d -o "${VALIDATOR_USER}" -g "${VALIDATOR_USER}" -m 0700 "${VALIDATOR_STATE_DIR}"
+install -d -o "${PREVIEW_USER}" -g "${PREVIEW_USER}" -m 2770 \
+  "${PREVIEW_STATE_DIR}" "${PREVIEW_STATE_DIR}/archives" "${PREVIEW_STATE_DIR}/queue" \
+  "${PREVIEW_STATE_DIR}/status" "${PREVIEW_STATE_DIR}/control"
+install -d -o "${PREVIEW_USER}" -g "${PREVIEW_USER}" -m 0700 \
+  "${PREVIEW_STATE_DIR}/home" "${PREVIEW_STATE_DIR}/projects"
 install -d -o "${AGENT_USER}" -g "${AUTH_GROUP}" -m 2750 "${AUTH_STATUS_DIR}"
 install -d -o root -g "${SERVICE_USER}" -m 0751 "${CONFIG_DIR}"
 
@@ -200,6 +214,7 @@ fi
 
 ln -sfn /opt/openhands-symphony-tool/bin/agentctl /usr/local/bin/agentctl
 ln -sfn /opt/openhands-symphony-tool/bin/openhands-symphony /usr/local/bin/openhands-symphony
+ln -sfn /opt/openhands-symphony-tool/bin/openhands-idea-preview /usr/local/bin/openhands-idea-preview
 ln -sfn /opt/provider-clis/node_modules/.bin/claude /usr/local/bin/claude
 ln -sfn /opt/provider-clis/node_modules/.bin/codex /usr/local/bin/codex
 ln -sfn /opt/browser-use/bin/browser-use /usr/local/bin/browser-use
@@ -208,7 +223,7 @@ if [[ -x "${AGY_PATH}" ]]; then
   ln -sfn "${AGY_PATH}" /usr/local/bin/agy
 fi
 
-for installed_command in agentctl openhands-symphony claude codex browser-use browser-harness agy; do
+for installed_command in agentctl openhands-symphony openhands-idea-preview claude codex browser-use browser-harness agy; do
   if [[ ! -x "/usr/local/bin/${installed_command}" ]]; then
     echo "Installation failed: /usr/local/bin/${installed_command} is missing or not executable" >&2
     exit 1

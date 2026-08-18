@@ -7,6 +7,7 @@ The default path is `/etc/openhands-symphony/config.toml`; override it with `SYM
 - `state_dir`: SQLite and durable orchestrator runtime state.
 - `workspace_dir`: repository caches and per-run worktrees.
 - `report_dir`: separate Markdown/JSON reports.
+- `preview_dir`: immutable deployment handoff, stable releases, logs, and preview status; keep the installed `/var/lib/openhands-preview` default unless the preview systemd unit is overridden to match.
 - `log_dir`: service logs.
 - `listen_host`, `listen_port`: webhook/health listener; keep loopback.
 - `webhook_secret_file`: GitHub HMAC secret. Never place the secret in TOML.
@@ -31,6 +32,8 @@ The default path is `/etc/openhands-symphony/config.toml`; override it with `SYM
 - `progress_path`: agent-owned progress path, default `idea/PROGRESS.md`.
 
 The ideas and Tier 1 allowlists must be disjoint. Only repositories in `[ideas].repositories` may receive direct default-branch publications; Tier 1 continues to publish generated branches and draft PRs. Both tiers share the scheduler's global and per-provider concurrency limits and repository leases.
+
+Every successful ideas publication is archived from the exact pushed commit and handed to the credential-free preview service. The service reads `.symphony/idea.toml`, optionally runs the repository's configured `setup_script`, starts the app on its declared loopback port, and advances `last_good_preview_commit` only after health succeeds. Preview ports must therefore be unique across active ideas repositories.
 
 ## `[scheduler]`
 

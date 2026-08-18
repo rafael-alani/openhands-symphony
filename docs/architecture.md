@@ -46,6 +46,12 @@ After a crash between push and PR creation, an existing remote branch is accepte
 
 The event path handles exact issues with low latency. The scheduler also searches each allowlisted repository for open `agent:ready` issues. A persistent systemd timer provides a second reconciliation trigger when the long-running service was offline.
 
+## Persistent ideas previews
+
+After an ideas run passes its in-worktree boot gate and the guarded commit reaches the default branch, Symphony creates an immutable `git archive` of that exact commit. A narrow filesystem queue hands the archive to the separate `openhands-preview` service; the preview account cannot read GitHub, provider, Canvas, validator, or orchestrator state.
+
+The manager extracts each commit into a stable per-repository release directory, runs the configured setup script without credentials, starts the `.symphony/idea.toml` argv on its declared loopback port, and advances `last_good_preview_commit` only after health succeeds. A failed candidate is stopped and the prior healthy release is restarted. Service restart restores every durable last-good release, while obsolete releases are bounded and cleaned. Symphony also publishes the current ideas allowlist into the handoff; removing a repository stops its preview before later cleanup or graduation. systemd limits the preview cgroup's network access to localhost and applies CPU, memory, task, process, file-descriptor, capability, and filesystem bounds.
+
 ## Concurrency and fairness
 
 The default concurrency key is `owner/repository`. A transactional `leases` row is unique by key; `BEGIN IMMEDIATE` makes two workers unable to claim it together. A repository may set a stable monorepo project key. Global and per-provider limits apply in addition.

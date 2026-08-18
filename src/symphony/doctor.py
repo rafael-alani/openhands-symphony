@@ -98,11 +98,13 @@ def _service_accounts() -> Check:
         orchestrator = pwd.getpwnam("openhands-symphony")
         worker = pwd.getpwnam("openhands-agent")
         validator = pwd.getpwnam("openhands-validator")
+        preview = pwd.getpwnam("openhands-preview")
         shared = grp.getgrnam("openhands-agents")
         operators = grp.getgrnam("openhands-operators")
+        preview_group = grp.getgrnam("openhands-preview")
     except KeyError as exc:
         return Check("service account isolation", False, f"missing account or group: {exc}")
-    separate = len({orchestrator.pw_uid, worker.pw_uid, validator.pw_uid}) == 3
+    separate = len({orchestrator.pw_uid, worker.pw_uid, validator.pw_uid, preview.pw_uid}) == 4
     members = set(shared.gr_mem)
     shared_ok = (
         (orchestrator.pw_name in members or orchestrator.pw_gid == shared.gr_gid)
@@ -113,11 +115,25 @@ def _service_accounts() -> Check:
     operators_ok = orchestrator.pw_name in operator_members or orchestrator.pw_gid == operators.gr_gid
     worker_excluded = worker.pw_name not in operator_members and worker.pw_gid != operators.gr_gid
     validator_excluded = validator.pw_name not in operator_members and validator.pw_gid != operators.gr_gid
+    preview_excluded = (
+        preview.pw_name not in operator_members
+        and preview.pw_gid != operators.gr_gid
+        and preview.pw_name not in members
+        and preview.pw_gid != shared.gr_gid
+    )
+    preview_writable = orchestrator.pw_name in set(preview_group.gr_mem)
     return Check(
         "service account isolation",
-        separate and shared_ok and operators_ok and worker_excluded and validator_excluded,
+        separate
+        and shared_ok
+        and operators_ok
+        and worker_excluded
+        and validator_excluded
+        and preview_excluded
+        and preview_writable,
         f"orchestrator uid={orchestrator.pw_uid}, worker uid={worker.pw_uid}, "
-        f"validator uid={validator.pw_uid}, shared_group={shared.gr_gid}, operators_group={operators.gr_gid}",
+        f"validator uid={validator.pw_uid}, preview uid={preview.pw_uid}, shared_group={shared.gr_gid}, "
+        f"operators_group={operators.gr_gid}, preview_group={preview_group.gr_gid}",
     )
 
 
@@ -351,6 +367,8 @@ def _idea_project_checks(config: Config, store: Store) -> list[Check]:
             f"completed={project.latest_completed_spec_hash if project else '-'}; "
             f"state={run.state if run else '-'}; "
             f"publication={run.published_commit if run and run.published_commit else '-'}; "
+            f"preview={project.preview_state if project else '-'}; "
+            f"last_good={project.last_good_preview_commit if project else '-'}; "
             f"question={run.question if run and run.state.value == 'question' else '-'}"
         )
         checks.append(Check(f"idea project {repository}", project is not None, detail, required=False))
@@ -376,6 +394,7 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
     keyring_status, keyring_output = _run(["systemctl", "is-active", "openhands-agent-keyring.service"])
     guest_agent_status, guest_agent_output = _run(["systemctl", "is-active", "qemu-guest-agent.service"])
     browser_status, browser_output = _run(["systemctl", "is-active", "openhands-browser.service"])
+    preview_status, preview_output = _run(["systemctl", "is-active", "openhands-idea-preview.service"])
     firewall_status, firewall_output = _run(["systemctl", "is-active", "openhands-symphony-firewall.service"])
     nft_status, nft_output = _run(["sudo", "-n", "/usr/sbin/nft", "list", "table", "inet", "openhands_symphony"])
     canvas_environment_status, canvas_environment = _run(
@@ -464,6 +483,16 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
             "private browser service",
             browser_status == 0 and browser_output == "active",
             _service_failure_detail("openhands-browser.service", browser_output),
+        ),
+        Check(
+            "credential-free idea preview service",
+            preview_status == 0 and preview_output == "active",
+            _service_failure_detail("openhands-idea-preview.service", preview_output),
+        ),
+        Check(
+            "idea preview state directory",
+            config.service.preview_dir.is_dir() and os.access(config.service.preview_dir, os.W_OK),
+            str(config.service.preview_dir),
         ),
         Check(
             "private browser writable state",

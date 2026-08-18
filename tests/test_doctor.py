@@ -186,6 +186,8 @@ def test_doctor_reports_idea_hash_state_publication_and_question() -> None:
         repository="solo/idea",
         latest_observed_spec_hash="latest-hash",
         latest_completed_spec_hash="completed-hash",
+        preview_state="healthy",
+        last_good_preview_commit="preview-commit",
     )
     run = SimpleNamespace(
         repository="solo/idea",
@@ -202,4 +204,6 @@ def test_doctor_reports_idea_hash_state_publication_and_question() -> None:
     assert "latest=latest-hash" in check.detail
     assert "completed=completed-hash" in check.detail
     assert "publication=published-commit" in check.detail
+    assert "preview=healthy" in check.detail
+    assert "last_good=preview-commit" in check.detail
     assert "question=Which option?" in check.detail

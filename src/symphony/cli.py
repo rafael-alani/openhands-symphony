@@ -140,6 +140,7 @@ def _idea_status_line(project: IdeaProject, run: IdeaRun | None, report_dir: Pat
         f"{project.repository} latest={project.latest_observed_spec_hash or '-'} "
         f"completed={project.latest_completed_spec_hash or '-'} state={run.state if run else '-'} "
         f"run={run.id if run else '-'} publication={run.published_commit if run and run.published_commit else '-'} "
+        f"preview={project.preview_state} last_good={project.last_good_preview_commit or '-'} "
         f"question={run.question if run and run.state.value == 'question' else '-'} "
         f"report={report if report and report.is_file() else '-'}"
     )
@@ -170,6 +171,7 @@ def _systemctl(action: str) -> int:
                 "openhands-agent-keyring.service",
                 "openhands-browser.service",
                 "openhands-canvas.service",
+                "openhands-idea-preview.service",
                 "openhands-symphony.service",
                 "openhands-symphony-reconcile.timer",
             )
@@ -230,12 +232,14 @@ def main() -> None:
         raise SystemExit(2) from None
 
     if args.command == "doctor":
+        coordinator.ideas.preview_deployments.sync_store(store, config.ideas.repositories)
         checks = run_doctor(config, store, coordinator)
         for check in checks:
             marker = "PASS" if check.ok else ("WARN" if not check.required else "FAIL")
             print(f"[{marker}] {check.name}: {check.detail}")
         raise SystemExit(0 if all(check.ok or not check.required for check in checks) else 1)
     if args.command == "status":
+        coordinator.ideas.preview_deployments.sync_store(store, config.ideas.repositories)
         active = subprocess.run(
             ["systemctl", "is-active", "openhands-symphony.target"],
             text=True,

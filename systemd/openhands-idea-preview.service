@@ -1,0 +1,42 @@
+[Unit]
+Description=Credential-free persistent previews for ideas repositories
+After=network-online.target
+PartOf=openhands-symphony.target
+
+[Service]
+Type=simple
+User=openhands-preview
+Group=openhands-preview
+Environment=HOME=/var/lib/openhands-preview/home
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/openhands-symphony-tool/bin/openhands-idea-preview --root /var/lib/openhands-preview
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadWritePaths=/var/lib/openhands-preview
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=false
+MemoryHigh=3G
+MemoryMax=4G
+CPUQuota=200%
+TasksMax=256
+LimitNOFILE=4096
+LimitNPROC=256
+UMask=0027
+
+[Install]
+WantedBy=openhands-symphony.target

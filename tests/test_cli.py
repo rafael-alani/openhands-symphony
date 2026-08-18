@@ -118,6 +118,7 @@ def test_start_skips_systemctl_start_when_target_is_already_active(monkeypatch, 
         ["systemctl", "is-active", "--quiet", "openhands-agent-keyring.service"],
         ["systemctl", "is-active", "--quiet", "openhands-browser.service"],
         ["systemctl", "is-active", "--quiet", "openhands-canvas.service"],
+        ["systemctl", "is-active", "--quiet", "openhands-idea-preview.service"],
         ["systemctl", "is-active", "--quiet", "openhands-symphony.service"],
         ["systemctl", "is-active", "--quiet", "openhands-symphony-reconcile.timer"],
     ]
@@ -224,6 +225,8 @@ def test_idea_status_exposes_hash_state_publication_and_question(tmp_path) -> No
         repository="solo/idea",
         latest_observed_spec_hash="new-hash",
         latest_completed_spec_hash="old-hash",
+        preview_state="healthy",
+        last_good_preview_commit="preview-commit",
     )
     run = SimpleNamespace(
         id="idea-run",
@@ -237,5 +240,7 @@ def test_idea_status_exposes_hash_state_publication_and_question(tmp_path) -> No
     assert "latest=new-hash" in line
     assert "completed=old-hash" in line
     assert "publication=commit-1" in line
+    assert "preview=healthy" in line
+    assert "last_good=preview-commit" in line
     assert "question=Pick A or B?" in line
     assert f"report={report}" in line

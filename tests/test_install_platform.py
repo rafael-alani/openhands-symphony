@@ -9,6 +9,7 @@ PLATFORM_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install_pla
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
 CHROMIUM_APPARMOR = Path(__file__).resolve().parents[1] / "packaging" / "openhands-symphony-chromium.apparmor"
 BROWSER_UNIT = Path(__file__).resolve().parents[1] / "systemd" / "openhands-browser.service"
+PREVIEW_UNIT = Path(__file__).resolve().parents[1] / "systemd" / "openhands-idea-preview.service"
 BROWSER_LAUNCHER = Path(__file__).resolve().parents[1] / "scripts" / "launch_headless_browser.sh"
 
 
@@ -103,3 +104,22 @@ def test_browser_crashpad_state_stays_in_the_writable_private_browser_home() -> 
         assert f'"${{AGENT_STATE_DIR}}/browser/{name}"' in installer
     assert "ReadWritePaths=/var/lib/openhands-agent/browser" in unit
     assert "--disable-breakpad" in launcher
+
+
+def test_preview_service_is_credential_free_loopback_only_and_resource_bounded() -> None:
+    installer = INSTALLER.read_text()
+    unit = PREVIEW_UNIT.read_text()
+
+    assert 'PREVIEW_USER="openhands-preview"' in installer
+    assert 'PREVIEW_STATE_DIR="/var/lib/openhands-preview"' in installer
+    assert "User=openhands-preview" in unit
+    assert "Group=openhands-preview" in unit
+    assert "IPAddressDeny=any" in unit
+    assert "IPAddressAllow=localhost" in unit
+    assert "ReadWritePaths=/var/lib/openhands-preview" in unit
+    assert "MemoryMax=" in unit
+    assert "CPUQuota=" in unit
+    assert "TasksMax=" in unit
+    assert "CapabilityBoundingSet=\n" in unit
+    assert "GH_CONFIG_DIR" not in unit
+    assert "EnvironmentFile" not in unit

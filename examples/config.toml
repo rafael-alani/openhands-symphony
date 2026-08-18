@@ -2,6 +2,7 @@
 state_dir = "/var/lib/openhands-symphony"
 workspace_dir = "/var/lib/openhands-symphony/workspaces"
 report_dir = "/var/lib/openhands-symphony/reports"
+preview_dir = "/var/lib/openhands-preview"
 log_dir = "/var/log/openhands-symphony"
 listen_host = "127.0.0.1"
 listen_port = 8787

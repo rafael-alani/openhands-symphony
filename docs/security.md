@@ -6,16 +6,19 @@ The dedicated VM is trusted but disposable. Only private, operator-controlled, e
 
 ## Credential separation
 
-Three unprivileged Unix identities create the main authority boundary:
+Four unprivileged Unix identities create the main authority boundary:
 
 - `openhands-symphony` owns SQLite, reports, webhook secret, GitHub login, commits, pushes, labels, comments, PRs, and reviews.
 - `openhands-agent` owns Claude/Codex/Antigravity subscription login and Browser Use profiles, and runs Canvas plus all model subprocesses.
 - `openhands-validator` has no GitHub or provider login and runs repository setup plus configured quality gates with an empty environment.
-- `openhands-agents` grants the three identities access only to confined worktrees. A separate `openhands-operators` group lets only the orchestrator read non-secret provider auth-status markers. The Canvas key is narrower still: root-owned and group-readable only by `openhands-symphony`.
+- `openhands-preview` owns immutable idea releases and persistent app processes. It has no access to GitHub, provider, Canvas, orchestrator, or validator state and receives only exact published commit archives through its narrow group-writable queue.
+- `openhands-agents` grants the orchestrator, model worker, and validator access only to confined worktrees. The preview account is deliberately excluded. A separate `openhands-operators` group lets only the orchestrator read non-secret provider auth-status markers. The Canvas key is narrower still: root-owned and group-readable only by `openhands-symphony`.
 
 The worker has no orchestrator `gh` configuration and is not a member of the operator group that can read the Canvas API-key file. Provider ACP wrappers also remove GitHub, provider API-key, and Canvas-key environment variables before starting the model-facing process. Setup and validation cross a one-way sudo boundary into the lower-authority validator account and start through `env -i`; the orchestrator may run arbitrary commands only as that lower-authority identity. Its only root sudo command is the exact read-only nftables table listing used by `agentctl doctor`. Logs/reports redact token/key/password patterns and cap output.
 
 Antigravity's Linux credential store uses a private D-Bus socket and GNOME Secret Service daemon under the worker UID; the socket is confined to `/run/openhands-agent`. Headless Chromium exposes CDP only on worker-local loopback port 9222. Browser Harness telemetry, cloud sync, cloud auto-spawn, and Browser Use/model API keys are absent from the service environment.
+
+The preview service has systemd memory, CPU, task, file-descriptor, process, filesystem, capability, and address-family limits. Its cgroup may bind and connect only on localhost; public network access is denied. A failed candidate is stopped and the previous healthy release is restarted, so SQLite advances the last-good pointer only from the manager's health result.
 
 Canvas host mode is not adversarial multi-tenant isolation: Canvas and its ACP children share the worker UID because subscription credentials must be visible to those children. The Canvas localhost key is removed from the child environment, but a deliberately hostile same-UID process could inspect other same-user process state on a normally configured Linux host. Use only trusted private repositories and a disposable VM; stronger hostile-code isolation requires an additional container/VM boundary not claimed by this release.
 

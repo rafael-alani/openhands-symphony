@@ -30,7 +30,7 @@ The default tool data directory is `~/Library/Application Support/ideasync`. Ove
 
 Every non-dry sync writes `_ideasync/STATUS.md` in the vault and appends JSON Lines to `<data-dir>/logs/ideasync.jsonl`. Failures also request a macOS notification through `osascript`. Dry runs create no lock, fetch nothing, write no log/status, and change no file.
 
-## Schedule and preview stub
+## Schedule and live preview
 
 ```bash
 ideasync install-schedule --dry-run
@@ -39,7 +39,9 @@ ideasync uninstall-schedule
 ideasync open example-owner/pantry-pilot --host your-ideas-vm
 ```
 
-The launchd implementation uses `StartInterval = 120`. Its plist stays below `<data-dir>/launchd/` and is bootstrapped into the current GUI domain, keeping all ideasync-owned files inside the data directory. Re-run `install-schedule` after a new login because no file is placed in `~/Library/LaunchAgents`. The scheduler is behind a small interface so a systemd user-timer implementation can be added later. `open` intentionally only prints the future preview's SSH forwarding command; preview management is outside this phase.
+The launchd implementation uses `StartInterval = 120`. Its plist stays below `<data-dir>/launchd/` and is bootstrapped into the current GUI domain, keeping all ideasync-owned files inside the data directory. Re-run `install-schedule` after a new login because no file is placed in `~/Library/LaunchAgents`. The scheduler is behind a small interface so a systemd user-timer implementation can be added later.
+
+`open` reads the repository's current preview port, establishes an `ExitOnForwardFailure` SSH tunnel bound only to local loopback, opens the browser, and keeps the tunnel attached to the terminal until Ctrl-C. Use `--local-port` when the declared port is already occupied, `--no-browser` when only the tunnel is wanted, or `--dry-run` to inspect the exact argv without connecting.
 
 ## Development
 

@@ -5,8 +5,12 @@ import math
 import os
 import shlex
 import shutil
+import socket
+import subprocess
 import sys
 import tempfile
+import time
+import webbrowser
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -45,9 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status", help="Print the last vault health report.")
     subparsers.add_parser("doctor", help="Check local configuration and managed clones without mutation.")
 
-    open_command = subparsers.add_parser("open", help="Print the future preview's SSH forwarding command.")
+    open_command = subparsers.add_parser("open", help="Open an idea preview through a loopback SSH tunnel.")
     open_command.add_argument("repository")
     open_command.add_argument("--host", default="your-vm")
+    open_command.add_argument("--local-port", type=int)
+    open_command.add_argument("--no-browser", action="store_true")
+    open_command.add_argument("--dry-run", action="store_true")
 
     install = subparsers.add_parser("install-schedule", help="Install the two-minute launchd schedule.")
     install.add_argument("--dry-run", action="store_true")
@@ -245,15 +252,93 @@ def _format_checks(checks: list[tuple[bool, str]]) -> str:
     return "\n".join(f"[{'ok' if ok else 'FAIL'}] {message}" for ok, message in checks)
 
 
-def command_open(paths: AppPaths, repository_name: str, host: str) -> str:
+def _wait_for_tunnel(process: subprocess.Popen[bytes], port: int, timeout: float = 10) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = process.poll()
+        if status is not None:
+            raise IdeasyncError(f"SSH tunnel exited before it became ready (exit {status})")
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise IdeasyncError(f"SSH tunnel did not listen on 127.0.0.1:{port} within {timeout:g}s")
+
+
+def command_open(
+    paths: AppPaths,
+    repository_name: str,
+    host: str,
+    *,
+    local_port: int | None,
+    no_browser: bool,
+    dry_run: bool,
+) -> str:
     validate_repository(repository_name)
+    if not host or host.startswith("-") or any(character.isspace() for character in host):
+        raise ConfigError("preview SSH host must be one non-option argument")
     config = load_config(paths)
     repository = config.repository(repository_name)
     if repository is None:
         raise ConfigError(f"repository is not configured: {repository_name}")
     preview = read_preview_contract(paths.clone_for(repository.name) / ".symphony" / "idea.toml")
-    command = ["ssh", "-N", "-L", f"{preview.port}:127.0.0.1:{preview.port}", host]
-    return f"Preview management is not implemented yet. When the VM preview exists, run:\n{shlex.join(command)}"
+    selected_port = preview.port if local_port is None else local_port
+    if not 1 <= selected_port <= 65535:
+        raise ConfigError("--local-port must be between 1 and 65535")
+    forwarding = f"127.0.0.1:{selected_port}:127.0.0.1:{preview.port}"
+    command = [
+        "ssh",
+        "-N",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "ServerAliveInterval=30",
+        "-o",
+        "ServerAliveCountMax=3",
+        "-L",
+        forwarding,
+        "--",
+        host,
+    ]
+    url = f"http://127.0.0.1:{selected_port}/"
+    if dry_run:
+        return f"would open {url} for {repository_name} with:\n{shlex.join(command)}"
+
+    process = subprocess.Popen(command)
+    try:
+        _wait_for_tunnel(process, selected_port)
+        print(f"preview={url} repository={repository_name}; press Ctrl-C to close the tunnel")
+        if not no_browser and not webbrowser.open(url):
+            print(f"browser did not open automatically; visit {url}", file=sys.stderr)
+        StructuredLogger(paths.data_dir, paths.log_file).write(
+            "preview_opened",
+            repository=repository_name,
+            host=host,
+            local_port=selected_port,
+            remote_port=preview.port,
+        )
+        status = process.wait()
+        if status != 0:
+            raise IdeasyncError(f"SSH tunnel exited with status {status}")
+    except KeyboardInterrupt:
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
+    except Exception:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+        raise
+    return f"closed preview tunnel for {repository_name}"
 
 
 def _dispatch(arguments: argparse.Namespace, paths: AppPaths) -> tuple[int, str]:
@@ -268,7 +353,14 @@ def _dispatch(arguments: argparse.Namespace, paths: AppPaths) -> tuple[int, str]
     if arguments.command == "doctor":
         return command_doctor(paths)
     if arguments.command == "open":
-        return 0, command_open(paths, arguments.repository, arguments.host)
+        return 0, command_open(
+            paths,
+            arguments.repository,
+            arguments.host,
+            local_port=arguments.local_port,
+            no_browser=arguments.no_browser,
+            dry_run=arguments.dry_run,
+        )
     if arguments.command in {"install-schedule", "uninstall-schedule"}:
         load_config(paths)
         scheduler = scheduler_for(paths)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from conftest import REPOSITORY, Harness
 
+from ideasync import cli
 from ideasync.cli import main
 
 
@@ -52,13 +53,44 @@ def test_add_and_schedule_dry_runs_create_nothing(
     assert after == before
 
 
-def test_doctor_and_open_stub(harness_factory: Callable[..., Harness]) -> None:
+def test_doctor_and_open_dry_run(harness_factory: Callable[..., Harness]) -> None:
     harness = harness_factory()
 
     doctor = harness.invoke("doctor")
-    opened = harness.invoke("open", REPOSITORY, "--host", "ideas-vm")
+    opened = harness.invoke("open", REPOSITORY, "--host", "ideas-vm", "--dry-run")
 
     assert doctor.code == 0, doctor.stderr
     assert "clone and contracts are healthy" in doctor.stdout
     assert opened.code == 0
-    assert "ssh -N -L 4317:127.0.0.1:4317 ideas-vm" in opened.stdout
+    assert "would open http://127.0.0.1:4317/" in opened.stdout
+    assert "-L 127.0.0.1:4317:127.0.0.1:4317 -- ideas-vm" in opened.stdout
+
+
+def test_open_starts_tunnel_and_browser(harness_factory: Callable[..., Harness], monkeypatch) -> None:
+    harness = harness_factory()
+    commands: list[list[str]] = []
+    opened: list[str] = []
+
+    class Process:
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+        def terminate(self):
+            return None
+
+        def kill(self):
+            return None
+
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda command: commands.append(command) or Process())
+    monkeypatch.setattr(cli, "_wait_for_tunnel", lambda _process, _port: None)
+    monkeypatch.setattr(cli.webbrowser, "open", lambda url: opened.append(url) or True)
+
+    result = harness.invoke("open", REPOSITORY, "--host", "ideas-vm", "--local-port", "14317")
+
+    assert result.code == 0, result.stderr
+    assert commands[0][-4:] == ["-L", "127.0.0.1:14317:127.0.0.1:4317", "--", "ideas-vm"]
+    assert opened == ["http://127.0.0.1:14317/"]
+    assert "closed preview tunnel" in result.stdout

@@ -1070,18 +1070,14 @@ class Store:
                 (run_id, now, json.dumps(detail, sort_keys=True)),
             )
             if new_state in {IdeaRunState.PUBLISHED, IdeaRunState.QUESTION}:
-                preview_state = "healthy" if new_state == IdeaRunState.PUBLISHED else "question"
+                preview_state = "pending" if new_state == IdeaRunState.PUBLISHED else None
                 connection.execute(
                     """
                     UPDATE idea_projects SET latest_completed_spec_hash=?,
-                        last_good_preview_commit=CASE WHEN ?=? THEN ? ELSE last_good_preview_commit END,
-                        preview_state=?, updated_at=? WHERE repository=?
+                        preview_state=COALESCE(?, preview_state), updated_at=? WHERE repository=?
                     """,
                     (
                         row["spec_hash"],
-                        str(new_state),
-                        str(IdeaRunState.PUBLISHED),
-                        published_commit,
                         preview_state,
                         now,
                         row["repository"],
@@ -1090,6 +1086,47 @@ class Store:
             return self._idea_run(
                 connection.execute("SELECT * FROM idea_runs WHERE id=?", (run_id,)).fetchone()
             )  # type: ignore[return-value]
+
+    def update_idea_preview(
+        self,
+        repository: str,
+        preview_state: str,
+        *,
+        last_good_commit: str | None = None,
+    ) -> IdeaProject:
+        if not preview_state or len(preview_state) > 64:
+            raise StoreError("idea preview state must be a short non-empty string")
+        now = utcnow()
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT repository FROM idea_projects WHERE repository=?", (repository,)
+            ).fetchone()
+            if row is None:
+                raise StoreError(f"unknown idea project: {repository}")
+            connection.execute(
+                """
+                UPDATE idea_projects SET preview_state=?,
+                    last_good_preview_commit=COALESCE(?, last_good_preview_commit), updated_at=?
+                WHERE repository=?
+                """,
+                (preview_state, last_good_commit, now, repository),
+            )
+            return self._idea_project(
+                connection.execute(
+                    "SELECT * FROM idea_projects WHERE repository=?", (repository,)
+                ).fetchone()
+            )  # type: ignore[return-value]
+
+    def latest_published_idea_run(self, repository: str) -> IdeaRun | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM idea_runs WHERE repository=? AND state=? AND published_commit IS NOT NULL
+                ORDER BY finished_at DESC, created_at DESC LIMIT 1
+                """,
+                (repository, IdeaRunState.PUBLISHED),
+            ).fetchone()
+        return self._idea_run(row)
 
     def begin_attempt(
         self,

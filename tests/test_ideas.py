@@ -19,6 +19,7 @@ from symphony.ideas_contract import IdeaContractError, git_blob_hash, parse_runt
 from symphony.ideas_coordinator import IdeasCoordinator
 from symphony.ideas_preview import PreviewEvidence
 from symphony.models import IdeaRunState, IdeaSnapshot, ProviderOutcome
+from symphony.preview_queue import PreviewQueue
 from symphony.providers.fake import FakeProvider
 from symphony.store import Store
 from symphony.webhook import create_app
@@ -197,6 +198,7 @@ def _coordinator(tmp_path: Path, provider: FakeProvider, remote: Path):
     coordinator = IdeasCoordinator(config, store, LocalIdeasGitHub(remote), {"codex": provider}, slots)
     workspaces = LocalIdeaWorkspaces(tmp_path, remote)
     coordinator.workspaces = workspaces
+    coordinator.preview_deployments = PreviewQueue(config.service.preview_dir, workspaces.root)
     coordinator.preview = FakePreview()
     return config, store, coordinator, workspaces
 
@@ -330,6 +332,12 @@ def test_non_fast_forward_race_rebases_once_and_keeps_implementation(tmp_path):
     assert LocalIdeasGitHub(remote)._show("main", "implemented.txt") == b"useful\n"
     assert LocalIdeasGitHub(remote)._show("main", "race.txt") == b"concurrent\n"
     assert b"assets/first-wish.png" in LocalIdeasGitHub(remote)._show("main", "idea/PROGRESS.md")
+    deployment = coordinator.preview_deployments.queued_request("solo/idea")
+    assert deployment is not None
+    assert deployment.commit == result.published_commit
+    project = store.get_idea_project("solo/idea")
+    assert project.preview_state == "pending"
+    assert project.last_good_preview_commit is None
 
 
 def test_question_publishes_progress_and_next_spec_edit_requeues(tmp_path):

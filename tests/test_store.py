@@ -111,6 +111,27 @@ def test_duplicate_idea_spec_hash_coalesces_to_one_run(tmp_path):
     assert len(store.list_idea_runs()) == 1
 
 
+def test_published_idea_waits_for_preview_health_before_advancing_last_good(tmp_path):
+    store = Store(tmp_path / "state.db")
+    store.ensure_idea_run(_idea_snapshot(), "codex")
+    run = store.claim_next_idea("worker-a", 60, 2, {"codex": 2})
+    assert run
+
+    store.transition_idea_run(
+        run.id,
+        IdeaRunState.PUBLISHED,
+        published_commit="b" * 40,
+    )
+
+    pending = store.get_idea_project("solo/idea")
+    assert pending.preview_state == "pending"
+    assert pending.last_good_preview_commit is None
+
+    healthy = store.update_idea_preview("solo/idea", "healthy", last_good_commit="b" * 40)
+    assert healthy.preview_state == "healthy"
+    assert healthy.last_good_preview_commit == "b" * 40
+
+
 def test_new_idea_revision_supersedes_running_run_but_keeps_lease_until_canceled(tmp_path):
     store = Store(tmp_path / "state.db")
     first, _, _ = store.ensure_idea_run(_idea_snapshot(), "codex")

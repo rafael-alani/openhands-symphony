@@ -26,6 +26,7 @@ test = [
 [project.scripts]
 agentctl = "symphony.cli:main"
 openhands-symphony = "symphony.service:main"
+openhands-idea-preview = "symphony.preview_manager:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/symphony"]

@@ -17,6 +17,7 @@ class ServiceConfig:
     state_dir: Path = Path("/var/lib/openhands-symphony")
     workspace_dir: Path = Path("/var/lib/openhands-symphony/workspaces")
     report_dir: Path = Path("/var/lib/openhands-symphony/reports")
+    preview_dir: Path = Path("/var/lib/openhands-preview")
     log_dir: Path = Path("/var/log/openhands-symphony")
     listen_host: str = "127.0.0.1"
     listen_port: int = 8787
@@ -142,6 +143,12 @@ def _repository_path(value: str, name: str) -> str:
     return value
 
 
+def _paths_overlap(first: Path, second: Path) -> bool:
+    left = first.resolve(strict=False)
+    right = second.resolve(strict=False)
+    return left == right or left.is_relative_to(right) or right.is_relative_to(left)
+
+
 def _validate_config(config: Config) -> None:
     if config.service.listen_host not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("service.listen_host must be loopback; use an SSH tunnel or Tailscale for access")
@@ -151,6 +158,16 @@ def _validate_config(config: Config) -> None:
         raise ValueError("github.auth_mode currently supports only 'gh'")
     if config.service.validation_user and not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", config.service.validation_user):
         raise ValueError("service.validation_user must be an empty string or a safe local account name")
+    if not config.service.preview_dir.is_absolute() or config.service.preview_dir == Path("/"):
+        raise ValueError("service.preview_dir must be a dedicated absolute directory")
+    protected_paths = (
+        config.service.state_dir,
+        config.service.workspace_dir,
+        config.service.report_dir,
+        config.service.log_dir,
+    )
+    if any(_paths_overlap(config.service.preview_dir, path) for path in protected_paths):
+        raise ValueError("service.preview_dir must not overlap orchestrator state, workspaces, reports, or logs")
     if not config.github.allowed_repositories:
         raise ValueError("github.allowed_repositories must contain at least one repository")
     if len(set(config.github.allowed_repositories)) != len(config.github.allowed_repositories):
@@ -245,6 +262,7 @@ def load_config(path: str | Path | None = None) -> Config:
         state_dir=_path(service_raw.get("state_dir"), ServiceConfig.state_dir),
         workspace_dir=_path(service_raw.get("workspace_dir"), ServiceConfig.workspace_dir),
         report_dir=_path(service_raw.get("report_dir"), ServiceConfig.report_dir),
+        preview_dir=_path(service_raw.get("preview_dir"), ServiceConfig.preview_dir),
         log_dir=_path(service_raw.get("log_dir"), ServiceConfig.log_dir),
         listen_host=str(service_raw.get("listen_host", "127.0.0.1")),
         listen_port=int(service_raw.get("listen_port", 8787)),

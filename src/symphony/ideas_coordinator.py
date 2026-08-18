@@ -20,6 +20,7 @@ from .ideas_progress import (
 from .ideas_prompting import idea_implementation_prompt
 from .ideas_reports import IdeaReportWriter
 from .models import IdeaRun, IdeaRunState, IdeaSnapshot, ProviderOutcome, ProviderRun
+from .preview_queue import PreviewQueue
 from .providers.base import ProviderAdapter
 from .providers.openhands import OpenHandsProviderError
 from .store import Store, StoreError
@@ -51,6 +52,7 @@ class IdeasCoordinator:
         self.provider_slots = provider_slots
         self.workspaces = WorkspaceManager(config.service.workspace_dir)
         self.preview = IdeaPreview(config.service.validation_user, config.service.state_dir)
+        self.preview_deployments = PreviewQueue(config.service.preview_dir, config.service.workspace_dir)
         self.reports = IdeaReportWriter(config.service.report_dir, store)
         self._active_runs: dict[str, tuple[ProviderAdapter, ProviderRun]] = {}
         self._active_lock = threading.Lock()
@@ -100,13 +102,38 @@ class IdeasCoordinator:
 
     def reconcile(self) -> list[tuple[str, str]]:
         results = self.recover_expired_leases()
+        self.preview_deployments.publish_allowlist(self.config.ideas.repositories)
+        self.preview_deployments.sync_store(self.store, self.config.ideas.repositories)
         for repository in self.config.ideas.repositories:
             try:
                 run, created = self.observe_repository(repository)
                 results.append((repository, "created" if created else str(run.state)))
+                published = self.store.latest_published_idea_run(repository)
+                if published:
+                    self._dispatch_preview(published)
             except Exception as exc:
                 results.append((repository, f"idea-error: {redact(str(exc), 2000)}"))
         return results
+
+    def _dispatch_preview(self, run: IdeaRun) -> None:
+        try:
+            queued = self.preview_deployments.enqueue(
+                run,
+                self.config.repository(run.repository).setup_script,
+            )
+            if queued:
+                self.store.record_idea_event(
+                    run.id,
+                    "preview-queued",
+                    {"commit": run.published_commit},
+                )
+        except Exception as exc:
+            self.store.update_idea_preview(run.repository, "dispatch-failed")
+            self.store.record_idea_event(
+                run.id,
+                "preview-dispatch-failed",
+                {"error": redact(f"{type(exc).__name__}: {exc}", 4000)},
+            )
 
     def recover_expired_leases(self) -> list[tuple[str, str]]:
         results: list[tuple[str, str]] = []
@@ -457,13 +484,15 @@ class IdeasCoordinator:
                 screenshots=evidence.screenshots,
             )
             commit = self._publish(run, worktree, question_only=False)
-            return self.store.transition_idea_run(
+            published = self.store.transition_idea_run(
                 run.id,
                 IdeaRunState.PUBLISHED,
                 phase="published",
                 validation_summary=validation_summary,
                 published_commit=commit,
             )
+            self._dispatch_preview(published)
+            return published
         except StaleIdeaError as exc:
             current = self._current(run.id)
             if current.state == IdeaRunState.SUPERSEDED:

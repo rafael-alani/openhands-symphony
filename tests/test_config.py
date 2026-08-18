@@ -51,6 +51,19 @@ def test_config_rejects_unsafe_validation_account(tmp_path):
         load_config(path)
 
 
+def test_config_rejects_preview_directory_inside_orchestrator_state(tmp_path):
+    path = _config(tmp_path / "config.toml")
+    path.write_text(
+        path.read_text().replace(
+            'listen_host = "127.0.0.1"',
+            'listen_host = "127.0.0.1"\nstate_dir = "/srv/symphony"\npreview_dir = "/srv/symphony/previews"',
+        )
+    )
+
+    with pytest.raises(ValueError, match="must not overlap"):
+        load_config(path)
+
+
 def test_config_loads_allowlisted_label_concurrency_scopes(tmp_path):
     path = _config(tmp_path / "config.toml")
     path.write_text(

@@ -26,8 +26,8 @@ Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/openhands-agent/bus
 Environment=GIT_OPTIONAL_LOCKS=0
 Environment=DO_NOT_TRACK=1
 EnvironmentFile=/etc/openhands-symphony/canvas.env
-Environment=OH_AGENT_SERVER_VERSION=1.35.0
-Environment=OH_AUTOMATION_VERSION=1.1.6
+Environment=OH_AGENT_SERVER_VERSION=1.49.1
+Environment=OH_AUTOMATION_VERSION=1.13.1
 ExecStart=/opt/openhands-canvas/node_modules/.bin/agent-canvas --port 8000
 Restart=on-failure
 RestartSec=10

@@ -1,6 +1,6 @@
 table inet openhands_symphony {
     chain input {
         type filter hook input priority filter; policy accept;
-        iifname != "lo" tcp dport { 8000, 8787, 9222 } drop
+        iifname != "lo" tcp dport { 3001, 8000, 8787, 9222, 18000, 18001, 19000 } drop
     }
 }

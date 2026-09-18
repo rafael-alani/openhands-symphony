@@ -24,7 +24,7 @@ Agent Canvas supplies the UI, conversation persistence, Agent Profiles, and Agen
 
 The orchestration service and GitHub adapter run as `openhands-symphony`. Canvas, providers, and the loopback-only headless Chromium service run as `openhands-agent`. Repository setup/tests run as `openhands-validator`, which has neither credential set. Only the worktree root is group-shared, so model and validation processes do not inherit the orchestrator's GitHub credential store.
 
-Canvas 1.4.0's internal Agent Server and automation backend bind loopback, but its Node ingress listens on a wildcard socket. A dedicated `inet openhands_symphony` nftables table therefore drops every non-loopback inbound packet to ports 8000, 8787, and 9222 before the stack starts. This is the default non-exposure boundary; SSH forwarding continues to work.
+Canvas's internal Agent Server and automation backend bind loopback, but its Node ingress listens on a wildcard socket. A dedicated `inet openhands_symphony` nftables table therefore drops every non-loopback inbound packet to ports 3001, 8000, 8787, 9222, 18000, 18001, and 19000 before the stack starts. This is the default non-exposure boundary; SSH forwarding continues to work.
 
 ## Analysis versus mutation
 

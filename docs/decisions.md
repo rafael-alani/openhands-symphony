@@ -2,7 +2,7 @@
 
 ## Companion, not fork
 
-Agent Canvas automations cannot select ACP Agent Profiles in 1.4.0. Use Canvas unchanged as UI/server and put provider routing behind a small Agent Server adapter. This keeps upstream upgrades possible.
+Agent Canvas 1.4.0 could not select ACP Agent Profiles in automations, which originally motivated the companion. Canvas 1.20.0 now supports saved agent-profile selection. Retain Symphony for its durable leases, validation and guarded GitHub mutation semantics; replacing that workflow requires separate acceptance. Canvas remains the unchanged UI/server behind a small Agent Server adapter.
 
 ## GitHub is truth; SQLite is coordination
 

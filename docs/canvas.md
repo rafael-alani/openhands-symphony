@@ -35,7 +35,7 @@ For a Symphony-managed job, use Canvas primarily as a viewer. Sending extra mess
 - use `/agent pause`, `/agent resume`, `/agent retry`, or `/agent cancel` in an issue comment;
 - review the canonical status comment and resulting draft PR in GitHub.
 
-Canvas upstream also exposes automation features, but this installation does not use them for Symphony. Pinned Canvas 1.4.0 automations cannot select the required ACP agent profile, so creating a second Canvas schedule or trigger would duplicate Symphony's webhook/reconciliation scheduler without preserving its routing and safety guarantees.
+Canvas upstream also exposes automation features, but this installation does not use them for Symphony. Canvas 1.20.0 adds saved agent-profile selection for automations. This removes an earlier 1.4.0 limitation, but does not replace Symphony's leases, validation, review and guarded GitHub mutation workflow. Creating a second schedule for the same issues would duplicate its scheduler.
 
 ## Inspect an issue run
 

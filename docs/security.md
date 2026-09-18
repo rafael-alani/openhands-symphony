@@ -36,6 +36,6 @@ The task prompt treats issue/repository text as untrusted and denies GitHub use,
 
 ## Exposure and subscription policy
 
-Symphony and Chromium bind loopback. Canvas 1.4.0's frontend ingress binds a wildcard socket upstream, so the installed nftables table drops non-loopback traffic to 8000/8787/9222. Use SSH forwarding. Tailscale access requires an explicit, narrow firewall exception; do not remove the default table wholesale. If low-latency webhooks are needed, expose only the HMAC-verified webhook path through a narrowly scoped HTTPS ingress; polling works without public ingress.
+Symphony and Chromium bind loopback. Canvas's frontend ingress binds a wildcard socket upstream, so the installed nftables table drops non-loopback traffic to 3001/8000/8787/9222/18000/18001/19000. Use SSH forwarding. Tailscale access requires an explicit, narrow firewall exception; do not remove the default table wholesale. If low-latency webhooks are needed, expose only the HMAC-verified webhook path through a narrowly scoped HTTPS ingress; polling works without public ingress.
 
 Symphony never invents tasks, evades quotas, rotates identities to bypass provider limits, or silently changes providers. Backoff is durable and bounded.

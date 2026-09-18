@@ -1,0 +1,83 @@
+{
+  "cancel_resume_conversation_id": "e1364fc6-3248-4d4b-b212-12c5d73332c2",
+  "conversation_ids": [
+    "7a9c86a2-cca1-4232-ad87-dfa871c8c7d2",
+    "fcd1dae6-9c56-4d92-a5ac-55537249113e"
+  ],
+  "credential_inheritance_visible": false,
+  "first_terminal_state": "finished",
+  "pause_state": "paused",
+  "resume_terminal_state": "finished",
+  "second_terminal_state": "finished",
+  "server": {
+    "build_git_ref": "unknown",
+    "build_git_sha": "unknown",
+    "capabilities": [
+      "conversation_runtime_routes_v1",
+      "profile_secret_scope_v1",
+      "credential_binding_v1",
+      "credential_binding_readiness_probe_v1",
+      "credential_binding_activation_guard_v1"
+    ],
+    "conversation_runtime": "local",
+    "docs": "/docs",
+    "idle_time": 33,
+    "max_foreground_terminal_timeout_seconds": null,
+    "python_version": "3.14.4 (main, Jun 18 2026, 14:25:02) [GCC 15.2.0]",
+    "redoc": "/redoc",
+    "runtime_idle_timeout_seconds": null,
+    "runtime_services": {
+      "agent_host_alias": "localhost",
+      "mode": "agent-canvas",
+      "services": {
+        "agent_server": {
+          "description": "The OpenHands Agent Server this agent is running inside. Tool calls (terminal, file_editor, browser, etc.) execute here.",
+          "url_from_agent": "http://localhost:18100"
+        },
+        "automation": {
+          "api_prefix": "/api/automation",
+          "auth_env_var": "OPENHANDS_AUTOMATION_API_KEY",
+          "description": "OpenHands Automations service. All routes are mounted under '/api/automation'. Authenticate with header 'X-Session-API-Key: $OPENHANDS_AUTOMATION_API_KEY'.",
+          "docs_url": "http://localhost:18101/api/automation/docs",
+          "openapi_url": "http://localhost:18101/api/automation/openapi.json",
+          "url_from_agent": "http://localhost:18101"
+        },
+        "frontend": {
+          "description": "Static-file server hosting the agent-canvas production build.",
+          "kind": "static",
+          "url_from_agent": "http://localhost:3101"
+        },
+        "ingress": {
+          "description": "Unified entry point. Routes /api/automation/* to the automation backend, /api/* and /sockets to the agent-server, and /* to the frontend.",
+          "url_from_agent": "http://localhost:8100"
+        }
+      }
+    },
+    "sdk_version": "1.49.1",
+    "title": "OpenHands Agent Server",
+    "tools_version": "1.49.1",
+    "uptime": 33,
+    "usable_tools": [
+      "canvas_ui",
+      "FinishTool",
+      "ask_oracle",
+      "file_editor",
+      "task_tool_set",
+      "task",
+      "task_tracker",
+      "terminal",
+      "workflow_tool_set",
+      "workflow",
+      "edit",
+      "list_directory",
+      "read_file",
+      "write_file",
+      "glob",
+      "grep",
+      "planning_file_editor"
+    ],
+    "version": "1.49.1",
+    "workspace_version": "1.49.1"
+  },
+  "workspace_isolation": true
+}

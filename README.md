@@ -32,7 +32,7 @@ sudo ./install.sh
 
 Because the source repository is private, install a read-only GitHub deploy key or your own GitHub SSH key on the VM before cloning. The installer does not copy or print that key.
 
-The installer preserves `/etc/openhands-symphony/config.toml` and credential state on reruns. It exposes nothing publicly: the webhook listener and Chromium bind loopback, while a dedicated nftables table drops non-loopback ingress to Canvas, the webhook listener, and CDP (ports 8000/8787/9222). This firewall is necessary because Canvas 1.4.0's Node ingress listens on a wildcard socket even though its internal backends use loopback.
+The installer preserves `/etc/openhands-symphony/config.toml` and credential state on reruns. It exposes nothing publicly: the webhook listener and Chromium bind loopback, while a dedicated nftables table drops non-loopback ingress to Canvas, the webhook listener, and CDP (ports 3001/8000/8787/9222/18000/18001/19000). This firewall is necessary because Canvas's Node ingress listens on a wildcard socket even though its internal backends use loopback.
 
 On an existing VM, `git pull` updates only this source checkout; `/usr/local/bin/agentctl` is an installed copy under `/opt`. Deploy pulled changes before rerunning the setup block:
 

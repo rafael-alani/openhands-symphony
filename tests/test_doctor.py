@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+
 from symphony import doctor
 from symphony.doctor import (
     _agent_worktree_permissions,
@@ -12,6 +14,27 @@ from symphony.doctor import (
     _service_failure_detail,
     _validator_boundary,
 )
+
+
+def test_automation_readiness_requires_a_working_database(tmp_path, monkeypatch):
+    key = tmp_path / "canvas.env"
+    key.write_text("LOCAL_BACKEND_API_KEY=test-key\n")
+    config = SimpleNamespace(service=SimpleNamespace(agent_server_api_key_file=key, agent_server_url="http://localhost:8000"))
+    url = "http://localhost:8000/api/automation/ready"
+
+    def reply(status, payload):
+        def get(endpoint, **kwargs):
+            assert endpoint == url
+            assert kwargs["headers"] == {"X-Session-API-Key": "test-key"}
+            return httpx.Response(status, json=payload, request=httpx.Request("GET", endpoint))
+        monkeypatch.setattr(doctor.httpx, "get", get)
+
+    reply(502, {"detail": "backend unavailable"})
+    assert not doctor._automation_ready(config).ok
+    reply(200, {"status": "not_ready"})
+    assert not doctor._automation_ready(config).ok
+    reply(200, {"status": "ready"})
+    assert doctor._automation_ready(config).ok
 
 
 def test_inaccessible_worker_credential_is_treated_as_account_isolation(monkeypatch) -> None:

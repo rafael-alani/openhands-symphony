@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 from dataclasses import replace
 
 import pytest
@@ -78,6 +79,23 @@ def test_plain_note_creates_repository_and_internal_contract_once(tmp_path):
     bridge.reconcile()
     assert store.vault_projects()[0]["repository"] == repo
     assert store.vault_projects()[0]["note_path"] == str(moved)
+
+
+def test_generated_progress_is_syncable_under_the_service_private_umask(tmp_path):
+    bridge, _, store, _ = setup(tmp_path)
+    old_mask = os.umask(0o077)
+    try:
+        assert bridge.reconcile() == []
+    finally:
+        os.umask(old_mask)
+    repo = store.vault_projects()[0]["repository"].replace("/", "--")
+    root = bridge.base_config.vault.path / "_symphony"
+    for directory in (root, root / repo, root / repo / "assets"):
+        assert directory.stat().st_mode & 0o770 == 0o770
+    assert (root / repo / "assets/demo.png").stat().st_mode & 0o660 == 0o660
+    # Original-note recovery remains private; the grant applies only to output.
+    originals = bridge.base_config.service.state_dir / "vault-note-originals"
+    assert originals.stat().st_mode & 0o077 == 0
 
 
 def test_modes_preserve_issues_and_resume_same_repo(tmp_path):

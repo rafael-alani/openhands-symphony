@@ -295,6 +295,15 @@ class VaultBridge:
         if not target.resolve().is_relative_to(root) or any(parent.is_symlink() for parent in (target, *target.parents) if parent != root):
             raise VaultError("generated output escapes the vault")
         if not target.is_file() or target.read_bytes() != content:
+            # The orchestrator runs with umask 0077 for credentials and state.
+            # Only newly created generated-output directories need shared
+            # traversal/write access for the separate Syncthing identity.
+            directory = root
+            for part in target.relative_to(root).parts[:-1]:
+                directory /= part
+                if not directory.exists():
+                    directory.mkdir(mode=0o2770)
+                    directory.chmod(0o2770)
             _atomic_write(target, content)
 
     def reconcile(self) -> list[str]:

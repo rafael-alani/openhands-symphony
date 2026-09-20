@@ -340,6 +340,22 @@ def _agent_server(config: Config, expected: str) -> Check:
         return Check("OpenHands Agent Server version", False, str(exc))
 
 
+def _automation_ready(config: Config) -> Check:
+    try:
+        key = config.service.agent_server_api_key_file.read_text().strip()
+        if key.startswith("LOCAL_BACKEND_API_KEY="):
+            key = key.split("=", 1)[1]
+        response = httpx.get(
+            f"{config.service.agent_server_url}/api/automation/ready",
+            headers={"X-Session-API-Key": key}, timeout=15,
+        )
+        response.raise_for_status()
+        ready = response.json().get("status") == "ready"
+        return Check("Canvas Automation database readiness", ready, "database ready" if ready else "backend is not ready")
+    except (OSError, ValueError, httpx.HTTPError) as exc:
+        return Check("Canvas Automation database readiness", False, str(exc))
+
+
 def _browser_cdp(expected: str) -> Check:
     try:
         response = httpx.get("http://127.0.0.1:9222/json/version", timeout=10)
@@ -605,11 +621,12 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
         Check(
             "OpenHands automation pin",
             canvas_environment_status == 0
-            and f"OH_AUTOMATION_VERSION={versions.get('OPENHANDS_AUTOMATION_VERSION', '1.1.6')}" in canvas_environment,
-            f"expected OH_AUTOMATION_VERSION={versions.get('OPENHANDS_AUTOMATION_VERSION', '1.1.6')}",
+            and f"OH_AUTOMATION_VERSION={versions.get('OPENHANDS_AUTOMATION_VERSION', '1.13.1')}" in canvas_environment,
+            f"expected OH_AUTOMATION_VERSION={versions.get('OPENHANDS_AUTOMATION_VERSION', '1.13.1')}",
         ),
+        _automation_ready(config),
         _browser_cdp(versions.get("CHROMIUM_VERSION", "149.0.7827.55")),
-        _agent_server(config, versions.get("AGENT_SERVER_VERSION", "1.35.0")),
+        _agent_server(config, versions.get("AGENT_SERVER_VERSION", "1.49.1")),
         Check(
             "model API keys absent",
             not any(os.environ.get(name) for name in model_api_key_names)

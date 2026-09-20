@@ -24,6 +24,11 @@ if [[ ${EUID} -ne 0 ]]; then
   exit 1
 fi
 
+# Package managers inherit the caller's mask. A root rollback shell commonly
+# uses 0077, which otherwise creates runtimes that service accounts cannot run.
+# Sensitive state below is created with explicit modes or scoped umask 0077.
+umask 0022
+
 if [[ ! -r /etc/os-release ]]; then
   echo "Unsupported distribution: /etc/os-release is missing" >&2
   exit 1
@@ -229,6 +234,11 @@ for installed_command in agentctl openhands-symphony openhands-idea-preview clau
     exit 1
   fi
 done
+
+# Repair generated runtime files from an earlier restrictive-mask install.
+# These trees contain software only; credentials and appdata are elsewhere.
+chmod -R a+rX /opt/openhands-canvas /opt/openhands-acp /opt/provider-clis \
+  /opt/antigravity-acp /opt/antigravity-cli /opt/browser-use /opt/openhands-symphony-tool
 
 if [[ ! -f "${CONFIG_DIR}/config.toml" ]]; then
   install -o root -g "${SERVICE_USER}" -m 0640 "${INSTALL_DIR}/examples/config.toml" "${CONFIG_DIR}/config.toml"

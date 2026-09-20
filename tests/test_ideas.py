@@ -374,6 +374,37 @@ def test_agent_spec_mutation_fails_without_push(tmp_path):
     assert LocalIdeasGitHub(remote).get_snapshot("solo/idea", "idea/SPEC.md", "idea/PROGRESS.md").spec_content == SPEC
 
 
+def test_fresh_idea_worktree_is_shared_before_validator_setup(tmp_path, monkeypatch):
+    remote, _ = _idea_remote(tmp_path)
+    config, store, coordinator, workspaces = _coordinator(
+        tmp_path, FakeProvider("codex", write_files={"implemented.txt": "ok\n"}), remote
+    )
+    shared = set()
+    monkeypatch.setattr(workspaces, "prepare_for_agent", lambda path: shared.add(path))
+
+    def setup(path, *_args):
+        assert path in shared, "validator cannot read a fresh private checkout"
+
+    monkeypatch.setattr(workspaces, "run_setup", setup)
+    coordinator.observe_repository("solo/idea")
+    assert coordinator.run_claimed(_claim(store, config)).state == IdeaRunState.PUBLISHED
+
+
+def test_pre_provider_failure_does_not_requeue_forever(tmp_path, monkeypatch):
+    remote, _ = _idea_remote(tmp_path)
+    config, store, coordinator, workspaces = _coordinator(tmp_path, FakeProvider("codex"), remote)
+
+    def setup(*_args):
+        raise OSError("setup unavailable")
+
+    monkeypatch.setattr(workspaces, "run_setup", setup)
+    coordinator.observe_repository("solo/idea")
+    run = coordinator.run_claimed(_claim(store, config))
+    assert run.attempt == 0
+    assert run.state == IdeaRunState.FAILED
+    assert not store.claim_next_idea("another-worker", 60, 2, {"codex": 2})
+
+
 def test_non_fast_forward_race_rebases_once_and_keeps_implementation(tmp_path):
     remote, _ = _idea_remote(tmp_path)
     provider = FakeProvider("codex", write_files={"implemented.txt": "useful\n"})

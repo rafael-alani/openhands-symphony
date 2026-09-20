@@ -375,7 +375,9 @@ class IdeasCoordinator:
         return self.workspaces.head(worktree)
 
     def _retry_or_fail(self, run: IdeaRun, phase: str, reason: str) -> IdeaRun:
-        if run.attempt < self.config.scheduler.max_attempts:
+        # Pre-provider failures never increment attempt. Requeueing them would
+        # otherwise retry forever (for example an unreadable setup script).
+        if 0 < run.attempt < self.config.scheduler.max_attempts:
             return self.store.transition_idea_run(
                 run.id,
                 IdeaRunState.QUEUED,
@@ -405,6 +407,9 @@ class IdeasCoordinator:
             spec_path = worktree / self.config.ideas.spec_path
             if not spec_path.is_file() or spec_path.read_bytes() != run.spec_content:
                 raise WorkspaceError("accepted idea spec does not match the exact base commit")
+            # Setup runs as the credential-free validator, which shares the
+            # worker group. A fresh checkout inherits the private service mask.
+            self.workspaces.prepare_for_agent(worktree)
             setup = self.workspaces.run_setup(
                 worktree,
                 self.config.repository(run.repository).setup_script,

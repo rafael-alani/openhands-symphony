@@ -521,6 +521,7 @@ class IdeasCoordinator:
                 phase="published",
                 validation_summary=validation_summary,
                 published_commit=commit,
+                question="",
             )
             self._dispatch_preview(published)
             return published

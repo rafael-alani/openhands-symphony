@@ -1170,7 +1170,7 @@ class Store:
             connection.execute(
                 """
                 UPDATE idea_runs SET attempt=?, conversation_id=COALESCE(?, conversation_id),
-                    session_id=COALESCE(?, session_id), phase='implementation', retry_requested=0, updated_at=?
+                    session_id=COALESCE(?, session_id), phase='implementation', question='', retry_requested=0, updated_at=?
                 WHERE id=?
                 """,
                 (attempt, conversation_id, session_id, now, run_id),

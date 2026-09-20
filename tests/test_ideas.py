@@ -386,8 +386,11 @@ def test_fresh_idea_worktree_is_shared_before_validator_setup(tmp_path, monkeypa
         assert path in shared, "validator cannot read a fresh private checkout"
 
     monkeypatch.setattr(workspaces, "run_setup", setup)
-    coordinator.observe_repository("solo/idea")
-    assert coordinator.run_claimed(_claim(store, config)).state == IdeaRunState.PUBLISHED
+    run, _ = coordinator.observe_repository("solo/idea")
+    store.update_idea_run(run.id, question="A previous setup attempt failed")
+    result = coordinator.run_claimed(_claim(store, config))
+    assert result.state == IdeaRunState.PUBLISHED
+    assert result.question == ""
 
 
 def test_pre_provider_failure_does_not_requeue_forever(tmp_path, monkeypatch):

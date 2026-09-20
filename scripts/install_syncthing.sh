@@ -44,6 +44,32 @@ t.write(p, encoding='utf-8', xml_declaration=True)
 PY
 fi
 
+# Loopback is reachable by the agent account too. Require GUI authentication
+# as well as filesystem isolation; never expose an unauthenticated local API.
+if python3 - <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+r = ET.parse('/var/lib/symphony-sync/config.xml').getroot()
+sys.exit(0 if not r.findtext('gui/user') or not r.findtext('gui/password') else 1)
+PY
+then
+  systemctl stop symphony-syncthing.service 2>/dev/null || true
+  python3 - <<'PY'
+import os
+import secrets
+import subprocess
+from pathlib import Path
+p = Path('/etc/openhands-symphony/syncthing-gui-password')
+if not p.exists():
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(secrets.token_urlsafe(32) + '\n')
+subprocess.run(['runuser', '-u', 'symphony-sync', '--', 'syncthing', 'generate',
+                '--home=/var/lib/symphony-sync', '--gui-user=symphony-admin', '--gui-password=-'],
+               input=p.read_text(), text=True, check=True)
+PY
+fi
+
 # configure_vault preserves existing directory ownership. It creates a new
 # enabled vault with the shared transport group, and excludes workers from it.
 /opt/openhands-symphony-tool/bin/python /opt/openhands-symphony/scripts/configure_vault.py

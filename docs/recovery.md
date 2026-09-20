@@ -50,3 +50,12 @@ Do not delete an orphan generated branch. Reconciliation intentionally marks it 
 SQLite uses `PRAGMA user_version`. Migrations run transactionally at service start, reject a database newer than the binary, and only move forward. Before `agentctl update`, the installer preserves config/state and a production operator should take the backup above. Rollback means reinstalling the previous versions from `versions.env` and restoring the pre-migration database if the schema changed.
 
 Provider/Canvas upgrades are never automatic. Antigravity's built-in updater is disabled. Update `versions.env` and checksums, rerun the capability/headless-interface spikes, run all tests, then run `agentctl update`.
+
+Canvas's Automation backend has its own SQLite schema, separate from Symphony's
+`state.db`. Inspect its installed package versions and schema before changing
+backend pins; retain a consistent copy of that database too. VM101 acceptance
+on 2026-09-20 preserved Automation schema 025 and reconciled the repository to
+the already-installed Agent Server 1.49.1 / Automation 1.13.1 pair. Do not
+downgrade or reset that database to make an older backend start. `agentctl
+doctor` checks the authenticated Automation readiness endpoint in addition to
+the Canvas page and Agent Server health.

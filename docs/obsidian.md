@@ -66,7 +66,11 @@ Leave the Infra folder's existing device list and permissions intact.
 
 The service is `symphony-syncthing.service`; its sensitive device keys and
 database are under `/var/lib/symphony-sync`. Preserve that directory with
-the VM recovery inputs. The Symphony installer restores its optional vault
+the VM recovery inputs. A fresh installation creates GUI user
+`symphony-admin` with a generated password retained only in the root-readable
+`/etc/openhands-symphony/syncthing-gui-password`. Use an SSH tunnel for the
+loopback GUI and retrieve that password in your own authenticated VM terminal.
+The Symphony installer restores its optional vault
 group membership on updates. It also installs `InaccessiblePaths` overrides
 for the agent, browser, and preview services, hiding source notes even if
 their Unix modes later become more permissive. Restart the Symphony stack
@@ -254,6 +258,6 @@ Tests cover discovery, repository bootstrapping, linked checklists and tables,
 checkbox completion/reopening, source-edit races, missing
 notes, conflicts, offline recovery, mode handover with active/queued work, and
 network dependency preparation for a fresh preview. GitHub calls use fakes in
-these tests. A real private-project acceptance run and Syncthing pairing on the
-VM are still required before claiming live operation. Hackathon mode remains
+these tests. See the [homelab acceptance record](obsidian-test.md) for separate
+live Syncthing, provider, GitHub, and browser evidence. Hackathon mode remains
 unimplemented.

@@ -1,0 +1,599 @@
+{
+  "date": "2026-09-20",
+  "host": "VM101",
+  "repository": "rafael-alani/symphony-workflow-test-812e73e7",
+  "application_code_commit": "b2583d3a5e36fea30c97602c21d671c2eb964568",
+  "tests": {
+    "symphony": 227,
+    "legacy_bridge": 21,
+    "lint": "passed"
+  },
+  "checkpoints": [
+    {
+      "name": "by-two",
+      "observed_at": "2026-09-20T20:19:10.050820+00:00",
+      "projects": [
+        {
+          "repository": "rafael-alani/symphony-workflow-test-812e73e7",
+          "mode": "idea",
+          "desired_mode": "idea",
+          "status": "ready",
+          "error": "",
+          "port": 10000
+        }
+      ],
+      "runs": [
+        {
+          "id": "61d94abd-803f-4cb8-be57-b0aa649ec364",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "repository setup failed",
+          "published_commit": "ec759cf0903b74f1bc7a4397876a6caa20e9270a",
+          "validation_summary": "no advisory checks configured"
+        },
+        {
+          "id": "f5d3524d-6b2f-46a2-8e5e-e674cce45eba",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "5f3f590e477bc345faaa69d7814509ff42a03c94",
+          "validation_summary": "1/1 advisory commands passed"
+        }
+      ],
+      "notes": {
+        "Symphony workflow test.md": {
+          "sha256": "277d05897cd43312b5bdb7ac9423f09a843a2621bb54f2d5dbbd41818cb765f6",
+          "checkbox_rows": [
+            "| [x] | [[Counter]] | Implement this first. |"
+          ]
+        },
+        "Counter.md": {
+          "sha256": "cb4af5dffeab8944588a208a49cd5725c3a2557bd70beaa9a9bbd251468ad5b3",
+          "checkbox_rows": []
+        },
+        "Reset.md": {
+          "sha256": "e315ed185ccd6a9dd620dab07c1fc1ce19fd90fa494ff38fe5bd078eab6b517e",
+          "checkbox_rows": []
+        }
+      }
+    },
+    {
+      "name": "restore-waypoint",
+      "observed_at": "2026-09-20T20:22:24.843898+00:00",
+      "projects": [
+        {
+          "repository": "rafael-alani/symphony-workflow-test-812e73e7",
+          "mode": "idea",
+          "desired_mode": "idea",
+          "status": "ready",
+          "error": "",
+          "port": 10000
+        }
+      ],
+      "runs": [
+        {
+          "id": "61d94abd-803f-4cb8-be57-b0aa649ec364",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "repository setup failed",
+          "published_commit": "ec759cf0903b74f1bc7a4397876a6caa20e9270a",
+          "validation_summary": "no advisory checks configured"
+        },
+        {
+          "id": "968ad8ee-03b1-4a7d-a37f-c314e5cb4eeb",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "523d19bd1991833b4dc8b19b120dc108ce274231",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "f5d3524d-6b2f-46a2-8e5e-e674cce45eba",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "5f3f590e477bc345faaa69d7814509ff42a03c94",
+          "validation_summary": "1/1 advisory commands passed"
+        }
+      ],
+      "notes": {
+        "Symphony workflow test.md": {
+          "sha256": "4430f2bd97a0a56dcc8d5c26c0d31e918011ae26543505130033535eca38090b",
+          "checkbox_rows": [
+            "| [x] | [[Counter]] | Implement this first. |"
+          ]
+        },
+        "Counter.md": {
+          "sha256": "b676add8d20b77ace55002c56a7b9312909ed680230c5dbfbb8bd4787a3aaec6",
+          "checkbox_rows": []
+        },
+        "Reset.md": {
+          "sha256": "e315ed185ccd6a9dd620dab07c1fc1ce19fd90fa494ff38fe5bd078eab6b517e",
+          "checkbox_rows": []
+        }
+      }
+    },
+    {
+      "name": "reset-precedence",
+      "observed_at": "2026-09-20T20:26:14.184324+00:00",
+      "projects": [
+        {
+          "repository": "rafael-alani/symphony-workflow-test-812e73e7",
+          "mode": "idea",
+          "desired_mode": "idea",
+          "status": "ready",
+          "error": "",
+          "port": 10000
+        }
+      ],
+      "runs": [
+        {
+          "id": "10e194a3-1b85-4073-8027-16f33fd84fea",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "2a8ab29e33994464ad5c700f7b1a2440869dae7d",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "61d94abd-803f-4cb8-be57-b0aa649ec364",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "repository setup failed",
+          "published_commit": "ec759cf0903b74f1bc7a4397876a6caa20e9270a",
+          "validation_summary": "no advisory checks configured"
+        },
+        {
+          "id": "968ad8ee-03b1-4a7d-a37f-c314e5cb4eeb",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "523d19bd1991833b4dc8b19b120dc108ce274231",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "f5d3524d-6b2f-46a2-8e5e-e674cce45eba",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "5f3f590e477bc345faaa69d7814509ff42a03c94",
+          "validation_summary": "1/1 advisory commands passed"
+        }
+      ],
+      "notes": {
+        "Symphony workflow test.md": {
+          "sha256": "4e10fc720c9e7eb00f0f4c3535cdd9e5704c095897341d0951deecf8ed8c5643",
+          "checkbox_rows": [
+            "| [x] | [[Counter]] | Implement this first. |",
+            "| [x] | [[Reset]] | Add reset while preserving the counter. |"
+          ]
+        },
+        "Counter.md": {
+          "sha256": "b676add8d20b77ace55002c56a7b9312909ed680230c5dbfbb8bd4787a3aaec6",
+          "checkbox_rows": []
+        },
+        "Reset.md": {
+          "sha256": "e315ed185ccd6a9dd620dab07c1fc1ce19fd90fa494ff38fe5bd078eab6b517e",
+          "checkbox_rows": []
+        }
+      }
+    },
+    {
+      "name": "question",
+      "observed_at": "2026-09-20T20:28:57.029389+00:00",
+      "projects": [
+        {
+          "repository": "rafael-alani/symphony-workflow-test-812e73e7",
+          "mode": "idea",
+          "desired_mode": "idea",
+          "status": "ready",
+          "error": "",
+          "port": 10000
+        }
+      ],
+      "runs": [
+        {
+          "id": "b28fe0ec-64d1-43ff-92ea-53790eba08c1",
+          "state": "question",
+          "phase": "question",
+          "attempt": 1,
+          "question": "Should every Add increment the counter by four or by five?",
+          "published_commit": "44936e44c9b3114217a5325626c85176a233958d",
+          "validation_summary": ""
+        },
+        {
+          "id": "10e194a3-1b85-4073-8027-16f33fd84fea",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "2a8ab29e33994464ad5c700f7b1a2440869dae7d",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "61d94abd-803f-4cb8-be57-b0aa649ec364",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "repository setup failed",
+          "published_commit": "ec759cf0903b74f1bc7a4397876a6caa20e9270a",
+          "validation_summary": "no advisory checks configured"
+        },
+        {
+          "id": "968ad8ee-03b1-4a7d-a37f-c314e5cb4eeb",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "523d19bd1991833b4dc8b19b120dc108ce274231",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "f5d3524d-6b2f-46a2-8e5e-e674cce45eba",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "5f3f590e477bc345faaa69d7814509ff42a03c94",
+          "validation_summary": "1/1 advisory commands passed"
+        }
+      ],
+      "notes": {
+        "Symphony workflow test.md": {
+          "sha256": "cc7f13e5203bf836343db6ea539fff756468e1a1dac04f600a551587e41627d0",
+          "checkbox_rows": [
+            "| [ ] | [[Counter]] | Implement this first after resolving the main brief's open decision. |",
+            "| [x] | [[Reset]] | Add reset while preserving the counter. |"
+          ]
+        },
+        "Counter.md": {
+          "sha256": "b676add8d20b77ace55002c56a7b9312909ed680230c5dbfbb8bd4787a3aaec6",
+          "checkbox_rows": []
+        },
+        "Reset.md": {
+          "sha256": "e315ed185ccd6a9dd620dab07c1fc1ce19fd90fa494ff38fe5bd078eab6b517e",
+          "checkbox_rows": []
+        }
+      }
+    },
+    {
+      "name": "github-running",
+      "observed_at": "2026-09-20T20:32:00.836917+00:00",
+      "projects": [
+        {
+          "repository": "rafael-alani/symphony-workflow-test-812e73e7",
+          "mode": "github",
+          "desired_mode": "github",
+          "status": "pending",
+          "error": "",
+          "port": 10000
+        }
+      ],
+      "runs": [
+        {
+          "id": "b28fe0ec-64d1-43ff-92ea-53790eba08c1",
+          "state": "question",
+          "phase": "question",
+          "attempt": 1,
+          "question": "Should every Add increment the counter by four or by five?",
+          "published_commit": "44936e44c9b3114217a5325626c85176a233958d",
+          "validation_summary": ""
+        },
+        {
+          "id": "10e194a3-1b85-4073-8027-16f33fd84fea",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "2a8ab29e33994464ad5c700f7b1a2440869dae7d",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "61d94abd-803f-4cb8-be57-b0aa649ec364",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "repository setup failed",
+          "published_commit": "ec759cf0903b74f1bc7a4397876a6caa20e9270a",
+          "validation_summary": "no advisory checks configured"
+        },
+        {
+          "id": "968ad8ee-03b1-4a7d-a37f-c314e5cb4eeb",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "523d19bd1991833b4dc8b19b120dc108ce274231",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "f5d3524d-6b2f-46a2-8e5e-e674cce45eba",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "5f3f590e477bc345faaa69d7814509ff42a03c94",
+          "validation_summary": "1/1 advisory commands passed"
+        }
+      ],
+      "jobs": [
+        {
+          "id": "84896bac-97a4-4ff4-b55d-e45cec866dca",
+          "issue_number": 1,
+          "state": "running",
+          "phase": "implementation",
+          "attempt": 1,
+          "pr_number": null
+        }
+      ],
+      "notes": {
+        "Symphony workflow test.md": {
+          "sha256": "4182ebbe600cbf3f5418dc190cf3e4123d6bf3eb735524a4751cdd4f3fd52e93",
+          "checkbox_rows": [
+            "| [ ] | [[Counter]] | Implement this first. |",
+            "| [x] | [[Reset]] | Add reset while preserving the counter. |"
+          ]
+        },
+        "Counter.md": {
+          "sha256": "b3e7c022bb3b694980bd9a69b4e12b4ab5679305504404e8c67a1362a620f3d0",
+          "checkbox_rows": []
+        },
+        "Reset.md": {
+          "sha256": "e315ed185ccd6a9dd620dab07c1fc1ce19fd90fa494ff38fe5bd078eab6b517e",
+          "checkbox_rows": []
+        }
+      }
+    },
+    {
+      "name": "github-handover",
+      "observed_at": "2026-09-20T20:33:31.091259+00:00",
+      "projects": [
+        {
+          "repository": "rafael-alani/symphony-workflow-test-812e73e7",
+          "mode": "github",
+          "desired_mode": "idea",
+          "status": "pending",
+          "error": "",
+          "port": 10000
+        }
+      ],
+      "runs": [
+        {
+          "id": "b28fe0ec-64d1-43ff-92ea-53790eba08c1",
+          "state": "question",
+          "phase": "question",
+          "attempt": 1,
+          "question": "Should every Add increment the counter by four or by five?",
+          "published_commit": "44936e44c9b3114217a5325626c85176a233958d",
+          "validation_summary": ""
+        },
+        {
+          "id": "10e194a3-1b85-4073-8027-16f33fd84fea",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "2a8ab29e33994464ad5c700f7b1a2440869dae7d",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "61d94abd-803f-4cb8-be57-b0aa649ec364",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "repository setup failed",
+          "published_commit": "ec759cf0903b74f1bc7a4397876a6caa20e9270a",
+          "validation_summary": "no advisory checks configured"
+        },
+        {
+          "id": "968ad8ee-03b1-4a7d-a37f-c314e5cb4eeb",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "523d19bd1991833b4dc8b19b120dc108ce274231",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "f5d3524d-6b2f-46a2-8e5e-e674cce45eba",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "5f3f590e477bc345faaa69d7814509ff42a03c94",
+          "validation_summary": "1/1 advisory commands passed"
+        }
+      ],
+      "jobs": [
+        {
+          "id": "84896bac-97a4-4ff4-b55d-e45cec866dca",
+          "issue_number": 1,
+          "state": "pr-open",
+          "phase": "pr-open",
+          "attempt": 1,
+          "pr_number": 2
+        }
+      ],
+      "notes": {
+        "Symphony workflow test.md": {
+          "sha256": "0d812abf739c5b5aa21aca03e5d6d527b3429fe9428cb853cb8df46fe481cb50",
+          "checkbox_rows": [
+            "| [ ] | [[Counter]] | Implement this first. |",
+            "| [x] | [[Reset]] | Add reset while preserving the counter. |"
+          ]
+        },
+        "Counter.md": {
+          "sha256": "b3e7c022bb3b694980bd9a69b4e12b4ab5679305504404e8c67a1362a620f3d0",
+          "checkbox_rows": []
+        },
+        "Reset.md": {
+          "sha256": "e315ed185ccd6a9dd620dab07c1fc1ce19fd90fa494ff38fe5bd078eab6b517e",
+          "checkbox_rows": []
+        }
+      }
+    },
+    {
+      "name": "resumed",
+      "observed_at": "2026-09-20T20:36:01.174914+00:00",
+      "projects": [
+        {
+          "repository": "rafael-alani/symphony-workflow-test-812e73e7",
+          "mode": "idea",
+          "desired_mode": "idea",
+          "status": "ready",
+          "error": "",
+          "port": 10000
+        }
+      ],
+      "runs": [
+        {
+          "id": "b28fe0ec-64d1-43ff-92ea-53790eba08c1",
+          "state": "question",
+          "phase": "question",
+          "attempt": 1,
+          "question": "Should every Add increment the counter by four or by five?",
+          "published_commit": "44936e44c9b3114217a5325626c85176a233958d",
+          "validation_summary": ""
+        },
+        {
+          "id": "7cf7e120-cfa1-4e63-9880-5440f26dfbfc",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "94dc8134caeeca2438153baf28bb896c810725d7",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "10e194a3-1b85-4073-8027-16f33fd84fea",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "2a8ab29e33994464ad5c700f7b1a2440869dae7d",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "61d94abd-803f-4cb8-be57-b0aa649ec364",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "repository setup failed",
+          "published_commit": "ec759cf0903b74f1bc7a4397876a6caa20e9270a",
+          "validation_summary": "no advisory checks configured"
+        },
+        {
+          "id": "968ad8ee-03b1-4a7d-a37f-c314e5cb4eeb",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "523d19bd1991833b4dc8b19b120dc108ce274231",
+          "validation_summary": "1/1 advisory commands passed"
+        },
+        {
+          "id": "f5d3524d-6b2f-46a2-8e5e-e674cce45eba",
+          "state": "published",
+          "phase": "published",
+          "attempt": 1,
+          "question": "",
+          "published_commit": "5f3f590e477bc345faaa69d7814509ff42a03c94",
+          "validation_summary": "1/1 advisory commands passed"
+        }
+      ],
+      "jobs": [
+        {
+          "id": "84896bac-97a4-4ff4-b55d-e45cec866dca",
+          "issue_number": 1,
+          "state": "pr-open",
+          "phase": "pr-open",
+          "attempt": 1,
+          "pr_number": 2
+        }
+      ],
+      "notes": {
+        "Symphony workflow test.md": {
+          "sha256": "4e10fc720c9e7eb00f0f4c3535cdd9e5704c095897341d0951deecf8ed8c5643",
+          "checkbox_rows": [
+            "| [x] | [[Counter]] | Implement this first. |",
+            "| [x] | [[Reset]] | Add reset while preserving the counter. |"
+          ]
+        },
+        "Counter.md": {
+          "sha256": "b3e7c022bb3b694980bd9a69b4e12b4ab5679305504404e8c67a1362a620f3d0",
+          "checkbox_rows": []
+        },
+        "Reset.md": {
+          "sha256": "e315ed185ccd6a9dd620dab07c1fc1ce19fd90fa494ff38fe5bd078eab6b517e",
+          "checkbox_rows": []
+        }
+      }
+    }
+  ],
+  "github_acceptance": {
+    "pull_request": "https://github.com/rafael-alani/symphony-workflow-test-812e73e7/pull/2",
+    "is_private": true,
+    "is_draft": true,
+    "state": "OPEN",
+    "head_commit": "67fe443066226dc346f389f0d58ea68a2c515675",
+    "application_tests": 4,
+    "validations": [
+      {
+        "attempt": 0,
+        "command_json": "[\"bash\", \"/var/lib/openhands-symphony/workspaces/runs/84896bac-97a4-4ff4-b55d-e45cec866dca/.openhands/setup.sh\"]",
+        "exit_code": 0,
+        "timed_out": 0,
+        "started_at": "2026-09-20T20:31:38.773310+00:00",
+        "finished_at": "2026-09-20T20:31:40.018189+00:00"
+      },
+      {
+        "attempt": 1,
+        "command_json": "[\"bash\", \".openhands/quality-gate.sh\"]",
+        "exit_code": 0,
+        "timed_out": 0,
+        "started_at": "2026-09-20T20:33:10.307433+00:00",
+        "finished_at": "2026-09-20T20:33:11.466104+00:00"
+      }
+    ]
+  },
+  "browser_assertions": [
+    "Initial count 0; click Add gives 1; keyboard gives 2",
+    "Subnote edit: click gives 2",
+    "Exact restore: click gives 1",
+    "Main precedence and Reset: click gives 3; keyboard Reset gives 0",
+    "Note resumption: Notes resumed visible; click gives 3; Reset gives 0"
+  ],
+  "isolation": {
+    "worker_validator_preview_unix_vault_access": "denied",
+    "worker_browser_preview_service_namespace_vault_read": "denied",
+    "syncthing_unauthenticated_config_api": 403,
+    "required_doctor_checks": "passed",
+    "optional_qemu_guest_agent": "unavailable; no reboot performed"
+  },
+  "final_state": {
+    "mode": "paused",
+    "status": "ready",
+    "idea_runs": 6,
+    "draft_pr_open": 2,
+    "syncthing": {
+      "state": "idle",
+      "local_files": 17315,
+      "global_files": 17315,
+      "need_files": 0,
+      "need_bytes": 0,
+      "pull_errors": 0
+    },
+    "source_notes": "Only the intended operator edits and wrapper metadata/checklist changes; Counter and Reset checked against fixture bytes",
+    "managed_preview": "Stopped by paused routing; last published commit retained",
+    "temporary_root_session": "Closed after recording and installing the evidence commit"
+  }
+}

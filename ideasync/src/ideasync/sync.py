@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ideasync.config import AppConfig, RepositoryConfig
-from ideasync.contract import read_frontmatter
+from ideasync.contract import read_frontmatter, read_preview_contract
 from ideasync.errors import ContractError, GitError, IdeasyncError
 from ideasync.fs import FileChanges, atomic_write, copy_file, mirror_tree, same_content
 from ideasync.git import Git
@@ -17,6 +17,7 @@ from ideasync.runtime import Notifier, StructuredLogger, repository_lock
 SPEC_PATH = Path("idea/SPEC.md")
 PROGRESS_PATH = Path("idea/PROGRESS.md")
 ASSETS_PATH = Path("idea/assets")
+GRADUATION_ARCHIVE_PATH = Path("archive/ideas")
 SPEC_COMMIT_MESSAGE = "ideasync: update idea spec"
 
 
@@ -64,6 +65,31 @@ def validate_routed_file(path: Path, repository: str) -> None:
     frontmatter = read_frontmatter(path)
     if frontmatter.repository.casefold() != repository.casefold():
         raise ContractError(f"{path}: routes to {frontmatter.repository}, expected {repository}")
+
+
+def graduation_archive(clone: Path, repository: str) -> Path | None:
+    """Return a valid archived Ideas contract when the active one was graduated."""
+
+    active_contract = (clone / SPEC_PATH, clone / PROGRESS_PATH, clone / ASSETS_PATH, clone / ".symphony/idea.toml")
+    if any(path.exists() or path.is_symlink() for path in active_contract):
+        return None
+    archive_root = clone / GRADUATION_ARCHIVE_PATH
+    if archive_root.is_symlink() or not archive_root.is_dir():
+        return None
+    ensure_within(clone, archive_root)
+    for candidate in sorted(archive_root.iterdir(), reverse=True):
+        if candidate.is_symlink() or not candidate.is_dir():
+            continue
+        ensure_within(clone, candidate)
+        archived_spec = candidate / SPEC_PATH
+        archived_runtime = candidate / ".symphony/idea.toml"
+        try:
+            validate_routed_file(archived_spec, repository)
+            read_preview_contract(archived_runtime)
+        except ContractError:
+            continue
+        return candidate
+    return None
 
 
 class SyncEngine:
@@ -195,6 +221,14 @@ class SyncEngine:
             raise GitError(f"managed clone is not on configured branch {repository.branch}")
         self.git.assert_clean(clone)
         remote_base, pending = self._update_clone(repository, clone, dry_run=dry_run)
+        archived = graduation_archive(clone, repository.name)
+        if archived is not None:
+            return SyncResult(
+                repository.name,
+                "retired",
+                f"Ideas contract graduated to {archived.relative_to(clone)}; "
+                f"vault preserved; run `ideasync remove {repository.name}` to deregister the managed clone",
+            )
         self._validate_clone_files(repository, clone)
 
         vault_spec = inventory.get(repository.name.casefold())

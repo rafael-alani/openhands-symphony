@@ -117,3 +117,23 @@ def test_config_loads_disjoint_private_ideas_allowlist_and_paths(tmp_path):
     assert config.ideas.repositories == ("solo/idea",)
     assert config.ideas.spec_path == "product/WISHES.md"
     assert config.repository("solo/idea").validation_commands == (("python3", "-m", "pytest"),)
+
+
+def test_vault_only_configuration_needs_no_static_repository(tmp_path):
+    path = _config(tmp_path / "config.toml")
+    value = path.read_text().replace('allowed_repositories = ["solo/project"]', 'allowed_repositories = []')
+    value = value[:value.index('[repositories."solo/project"]')]
+    path.write_text(value + '\n[vault]\nenabled = true\nowner = "solo"\npath = "/obsidian"\n')
+    config = load_config(path)
+    assert config.github.allowed_repositories == ()
+    assert config.vault.projects_dir == "1. Projects & Tasks"
+    assert config.providers["codex"].permission_mode == "full"
+
+
+@pytest.mark.parametrize("fragment", ['path = "/"', 'projects_dir = "../outside"', 'owner = "bad/owner"', 'provider = "missing"'])
+def test_invalid_vault_configuration_rejected(tmp_path, fragment):
+    path = _config(tmp_path / "config.toml")
+    owner = '' if fragment.startswith('owner') else 'owner = "solo"\n'
+    path.write_text(path.read_text() + '\n[vault]\nenabled = true\n' + owner + fragment + '\n')
+    with pytest.raises(ValueError):
+        load_config(path)

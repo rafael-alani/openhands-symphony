@@ -21,9 +21,17 @@ from ideasync.errors import ConfigError, ContractError, IdeasyncError
 from ideasync.fs import atomic_write, copy_file, mirror_tree
 from ideasync.git import Git
 from ideasync.paths import AppPaths, ensure_within
-from ideasync.runtime import StructuredLogger
+from ideasync.runtime import StructuredLogger, repository_lock
 from ideasync.scheduler import scheduler_for
-from ideasync.sync import ASSETS_PATH, PROGRESS_PATH, SPEC_PATH, SyncEngine, discover_vault_specs, validate_routed_file
+from ideasync.sync import (
+    ASSETS_PATH,
+    PROGRESS_PATH,
+    SPEC_PATH,
+    SyncEngine,
+    discover_vault_specs,
+    graduation_archive,
+    validate_routed_file,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,12 +43,20 @@ def build_parser() -> argparse.ArgumentParser:
     initialize = subparsers.add_parser("init", help="Initialize a data directory and vault contract.")
     initialize.add_argument("--vault", required=True, help="Dedicated ideas vault directory.")
     initialize.add_argument("--quiet-period-seconds", type=float, default=30.0)
+    initialize.add_argument("--preview-host", help="Default SSH destination used by `ideasync open`.")
     initialize.add_argument("--dry-run", action="store_true")
 
     add = subparsers.add_parser("add", help="Add one owner/repo and create its dedicated managed clone.")
     add.add_argument("repository")
     add.add_argument("--remote", help="Git remote URL; defaults to git@github.com:owner/repo.git.")
     add.add_argument("--dry-run", action="store_true")
+
+    remove = subparsers.add_parser(
+        "remove",
+        help="Deregister a graduated repository and retain its managed clone in recoverable storage.",
+    )
+    remove.add_argument("repository")
+    remove.add_argument("--dry-run", action="store_true")
 
     sync = subparsers.add_parser("sync", help="Run one sync pass for one or every configured repository.")
     sync.add_argument("repository", nargs="?")
@@ -51,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     open_command = subparsers.add_parser("open", help="Open an idea preview through a loopback SSH tunnel.")
     open_command.add_argument("repository")
-    open_command.add_argument("--host", default="your-vm")
+    open_command.add_argument("--host", help="Override the configured preview SSH destination.")
     open_command.add_argument("--local-port", type=int)
     open_command.add_argument("--no-browser", action="store_true")
     open_command.add_argument("--dry-run", action="store_true")
@@ -69,12 +85,26 @@ def _paths_overlap(first: Path, second: Path) -> bool:
     return resolved_first == resolved_second or resolved_first.is_relative_to(resolved_second) or resolved_second.is_relative_to(resolved_first)
 
 
-def command_init(paths: AppPaths, vault_value: str, quiet_period: float, *, dry_run: bool) -> str:
+def _validate_preview_host(host: str | None) -> str | None:
+    if host is not None and (not host or host.startswith("-") or any(character.isspace() for character in host)):
+        raise ConfigError("preview SSH host must be one non-option argument")
+    return host
+
+
+def command_init(
+    paths: AppPaths,
+    vault_value: str,
+    quiet_period: float,
+    preview_host: str | None,
+    *,
+    dry_run: bool,
+) -> str:
     if not math.isfinite(quiet_period) or quiet_period < 0:
         raise ConfigError("quiet period must be a finite, non-negative number")
     vault = Path(vault_value).expanduser().absolute()
     if _paths_overlap(paths.data_dir, vault):
         raise ConfigError("the vault and ideasync data directory must not contain one another")
+    preview_host = _validate_preview_host(preview_host)
     if paths.config_file.exists():
         raise ConfigError(f"ideasync is already initialized at {paths.config_file}")
     if dry_run:
@@ -84,7 +114,7 @@ def command_init(paths: AppPaths, vault_value: str, quiet_period: float, *, dry_
     vault.mkdir(parents=True, exist_ok=True)
     if not vault.is_dir():
         raise ConfigError(f"vault is not a directory: {vault}")
-    config = AppConfig(vault=vault, quiet_period_seconds=quiet_period)
+    config = AppConfig(vault=vault, quiet_period_seconds=quiet_period, preview_host=preview_host)
     save_config(paths, config)
     StructuredLogger(paths.data_dir, paths.log_file).write(
         "initialized", vault=str(vault), quiet_period_seconds=quiet_period
@@ -123,7 +153,7 @@ def command_add(paths: AppPaths, repository_name: str, remote: str | None, *, dr
         progress = temporary_clone / PROGRESS_PATH
         if progress.exists() or progress.is_symlink():
             validate_routed_file(progress, repository_name)
-        read_preview_contract(temporary_clone / ".symphony" / "idea.toml")
+        preview_contract = read_preview_contract(temporary_clone / ".symphony" / "idea.toml")
 
         if existing_vault_spec is None:
             vault_directory = config.vault / repository_name.split("/", 1)[1]
@@ -172,7 +202,9 @@ def command_add(paths: AppPaths, repository_name: str, remote: str | None, *, dr
             target_root=config.vault,
             dry_run=False,
         )
-        updated = config.with_repository(RepositoryConfig(repository_name, remote_value, branch))
+        updated = config.with_repository(
+            RepositoryConfig(repository_name, remote_value, branch, preview_contract.port)
+        )
         save_config(paths, updated)
         configured = True
         StructuredLogger(paths.data_dir, paths.log_file).write(
@@ -184,6 +216,76 @@ def command_add(paths: AppPaths, repository_name: str, remote: str | None, *, dr
             ensure_within(paths.data_dir, destination)
             shutil.rmtree(destination, ignore_errors=True)
         shutil.rmtree(temporary_root, ignore_errors=True)
+
+
+def command_remove(paths: AppPaths, repository_name: str, *, dry_run: bool) -> str:
+    """Retire a locally managed clone only after its remote Ideas contract graduated."""
+
+    validate_repository(repository_name)
+    config = load_config(paths)
+    repository = config.repository(repository_name)
+    if repository is None:
+        raise ConfigError(f"repository is not configured: {repository_name}")
+    clone = paths.clone_for(repository.name)
+    if not clone.is_dir():
+        raise ConfigError(f"managed clone is missing: {clone}")
+    if dry_run:
+        return (
+            f"would verify that {repository.name} graduated, remove it from {paths.config_file}, "
+            f"and move its managed clone below {paths.retired_clones_dir}; vault files would be preserved"
+        )
+
+    config_lock = paths.lock_for("__config__")
+    with repository_lock(paths.data_dir, config_lock, "ideasync configuration"):
+        # Reload after taking the configuration lock so two operator commands
+        # cannot overwrite one another's repository list.
+        config = load_config(paths)
+        repository = config.repository(repository_name)
+        if repository is None:
+            raise ConfigError(f"repository is not configured: {repository_name}")
+        with repository_lock(paths.data_dir, paths.lock_for(repository.name), repository.name):
+            git = Git()
+            if git.origin_url(clone) != repository.remote:
+                raise ConfigError("managed clone origin differs from configured remote")
+            if git.current_branch(clone) != repository.branch:
+                raise ConfigError(f"managed clone is not on configured branch {repository.branch}")
+            git.assert_clean(clone)
+            git.fetch(clone)
+            local = git.rev_parse(clone)
+            remote_ref = git.remote_ref(repository.branch)
+            remote = git.rev_parse(clone, remote_ref)
+            if local != remote:
+                if not git.is_ancestor(clone, local, remote):
+                    raise ConfigError("managed clone has unpublished or divergent commits; refusing retirement")
+                git.fast_forward(clone, remote_ref)
+                local = git.rev_parse(clone)
+            archived = graduation_archive(clone, repository.name)
+            if archived is None:
+                raise ConfigError(
+                    "remote Ideas contract is still active or has no valid graduation archive; "
+                    "graduate the repository before removing it"
+                )
+            archive_relative = archived.relative_to(clone)
+
+            retired = paths.retired_clone_for(repository.name) / local
+            ensure_within(paths.data_dir, retired)
+            if retired.exists():
+                raise ConfigError(f"retired clone destination already exists: {retired}")
+            retired.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(clone, retired)
+            try:
+                save_config(paths, config.without_repository(repository.name))
+            except Exception:
+                os.replace(retired, clone)
+                raise
+
+    StructuredLogger(paths.data_dir, paths.log_file).write(
+        "repository_removed",
+        repository=repository.name,
+        archive=str(archive_relative),
+        retired_clone=str(retired),
+    )
+    return f"removed {repository.name}; vault preserved; managed clone retained at {retired}"
 
 
 def command_sync(paths: AppPaths, repository: str | None, *, dry_run: bool) -> tuple[int, str]:
@@ -234,11 +336,25 @@ def command_doctor(paths: AppPaths) -> tuple[int, str]:
             if git.origin_url(clone) != repository.remote:
                 raise ConfigError("managed clone origin differs from configured remote")
             git.assert_clean(clone)
+            archived = graduation_archive(clone, repository.name)
+            if archived is not None:
+                checks.append(
+                    (
+                        True,
+                        f"{repository.name}: graduated at {archived.relative_to(clone)}; "
+                        f"run `ideasync remove {repository.name}` to deregister it",
+                    )
+                )
+                continue
             validate_routed_file(clone / SPEC_PATH, repository.name)
             progress = clone / PROGRESS_PATH
             if progress.exists() or progress.is_symlink():
                 validate_routed_file(progress, repository.name)
-            read_preview_contract(clone / ".symphony" / "idea.toml")
+            preview = read_preview_contract(clone / ".symphony" / "idea.toml")
+            if repository.preview_port is not None and preview.port != repository.preview_port:
+                raise ContractError(
+                    f"preview port changed from pinned port {repository.preview_port} to {preview.port}"
+                )
             if repository.name.casefold() not in inventory:
                 raise ContractError("no vault spec routes to this repository")
         except IdeasyncError as exc:
@@ -269,24 +385,35 @@ def _wait_for_tunnel(process: subprocess.Popen[bytes], port: int, timeout: float
 def command_open(
     paths: AppPaths,
     repository_name: str,
-    host: str,
+    host: str | None,
     *,
     local_port: int | None,
     no_browser: bool,
     dry_run: bool,
 ) -> str:
     validate_repository(repository_name)
-    if not host or host.startswith("-") or any(character.isspace() for character in host):
-        raise ConfigError("preview SSH host must be one non-option argument")
     config = load_config(paths)
+    selected_host = _validate_preview_host(host or config.preview_host)
+    if selected_host is None:
+        raise ConfigError("preview SSH host is not configured; pass --host or rerun init with --preview-host")
     repository = config.repository(repository_name)
     if repository is None:
         raise ConfigError(f"repository is not configured: {repository_name}")
-    preview = read_preview_contract(paths.clone_for(repository.name) / ".symphony" / "idea.toml")
-    selected_port = preview.port if local_port is None else local_port
+    archived = graduation_archive(paths.clone_for(repository.name), repository.name)
+    if archived is not None:
+        raise ConfigError(
+            f"repository graduated at {archived.relative_to(paths.clone_for(repository.name))}; "
+            f"run `ideasync remove {repository.name}`"
+        )
+    remote_port = repository.preview_port
+    if remote_port is None:
+        # Backward compatibility for configurations created before ports
+        # were pinned by `ideasync add`.
+        remote_port = read_preview_contract(paths.clone_for(repository.name) / ".symphony" / "idea.toml").port
+    selected_port = remote_port if local_port is None else local_port
     if not 1 <= selected_port <= 65535:
         raise ConfigError("--local-port must be between 1 and 65535")
-    forwarding = f"127.0.0.1:{selected_port}:127.0.0.1:{preview.port}"
+    forwarding = f"127.0.0.1:{selected_port}:127.0.0.1:{remote_port}"
     command = [
         "ssh",
         "-N",
@@ -299,7 +426,7 @@ def command_open(
         "-L",
         forwarding,
         "--",
-        host,
+        selected_host,
     ]
     url = f"http://127.0.0.1:{selected_port}/"
     if dry_run:
@@ -314,9 +441,9 @@ def command_open(
         StructuredLogger(paths.data_dir, paths.log_file).write(
             "preview_opened",
             repository=repository_name,
-            host=host,
+            host=selected_host,
             local_port=selected_port,
-            remote_port=preview.port,
+            remote_port=remote_port,
         )
         status = process.wait()
         if status != 0:
@@ -343,9 +470,17 @@ def command_open(
 
 def _dispatch(arguments: argparse.Namespace, paths: AppPaths) -> tuple[int, str]:
     if arguments.command == "init":
-        return 0, command_init(paths, arguments.vault, arguments.quiet_period_seconds, dry_run=arguments.dry_run)
+        return 0, command_init(
+            paths,
+            arguments.vault,
+            arguments.quiet_period_seconds,
+            arguments.preview_host,
+            dry_run=arguments.dry_run,
+        )
     if arguments.command == "add":
         return 0, command_add(paths, arguments.repository, arguments.remote, dry_run=arguments.dry_run)
+    if arguments.command == "remove":
+        return 0, command_remove(paths, arguments.repository, dry_run=arguments.dry_run)
     if arguments.command == "sync":
         return command_sync(paths, arguments.repository, dry_run=arguments.dry_run)
     if arguments.command == "status":

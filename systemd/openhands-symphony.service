@@ -23,6 +23,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/openhands-symphony /var/lib/openhands-preview /var/lib/openhands-validator /var/log/openhands-symphony
+ReadWritePaths=-/obsidian
 UMask=0077
 
 [Install]

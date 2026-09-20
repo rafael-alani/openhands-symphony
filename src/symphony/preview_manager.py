@@ -6,17 +6,18 @@ import json
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import tarfile
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from types import FrameType
 
 import httpx
 
-from .ideas_contract import IdeaContractError, IdeaRuntime, parse_runtime, safe_path
+from .ideas_contract import IdeaContractError, IdeaRuntime, parse_runtime, preview_argv, safe_path
 from .models import utcnow
 from .preview_queue import COMMIT_PATTERN, PreviewRequest, PreviewStatus, preview_repository_key, sha256_file
 from .validation import redact
@@ -105,20 +106,20 @@ class PreviewManager:
         except (OSError, ValueError, TypeError):
             return None
 
-    def _allowed_repositories(self) -> set[str] | None:
+    def _allowed_repositories(self) -> set[str]:
         try:
             payload = json.loads((self.control_dir / "allowlist.json").read_text(encoding="utf-8"))
             repositories = payload.get("repositories") if isinstance(payload, dict) else None
             if not isinstance(repositories, list) or not all(isinstance(value, str) for value in repositories):
-                return None
+                return set()
             return set(repositories)
         except (OSError, ValueError, TypeError):
-            return None
+            # The allowlist is the preview service's authorization input. A
+            # missing or malformed control file must never widen authority.
+            return set()
 
-    def _enforce_allowlist(self) -> set[str] | None:
+    def _enforce_allowlist(self) -> set[str]:
         allowed = self._allowed_repositories()
-        if allowed is None:
-            return None
         for repository, preview in list(self._active.items()):
             if repository in allowed:
                 continue
@@ -274,7 +275,7 @@ class PreviewManager:
         log_handle = (logs / f"{commit}.log").open("ab", buffering=0)
         try:
             process = subprocess.Popen(
-                runtime.start,
+                preview_argv(runtime),
                 cwd=release,
                 env=self._environment(runtime),
                 stdout=log_handle,
@@ -287,6 +288,12 @@ class PreviewManager:
         managed = ManagedPreview(repository, commit, release, runtime, process, log_handle)
         self._active[repository] = managed
         return managed
+
+    @staticmethod
+    def _available_loopback_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            return int(probe.getsockname()[1])
 
     def _health(self, preview: ManagedPreview) -> None:
         url = f"http://127.0.0.1:{preview.runtime.port}{preview.runtime.health_path}"
@@ -360,21 +367,66 @@ class PreviewManager:
                 detail=f"deployment preparation failed; last good preview retained: {type(exc).__name__}: {exc}",
             )
             self._write_project_state(status)
+            self._cleanup(request.repository, status)
             return status
 
-        if current:
-            previous_commit = current.commit
-            self._stop_preview(current)
+        stable_port = None
+        if previous_status and previous_status.last_good_commit:
+            stable_port = previous_status.port
+            if stable_port is None:
+                try:
+                    stable_port = self._runtime_for_release(
+                        self._release_dir(request.repository, previous_status.last_good_commit)
+                    ).port
+                except (OSError, IdeaContractError):
+                    pass
+        if stable_port is None and current and current.process.poll() is None:
+            stable_port = current.runtime.port
+        if stable_port is not None and runtime.port != stable_port:
+            active = current if current and current.process.poll() is None else None
+            status = self._write_status(
+                request.repository,
+                desired_commit=request.commit,
+                active_commit=active.commit if active else None,
+                last_good_commit=previous_commit,
+                state="rollback" if active else "failed",
+                runtime=active.runtime if active else None,
+                detail=(
+                    f"preview port is immutable after the first healthy release: "
+                    f"expected {stable_port}, received {runtime.port}"
+                ),
+            )
+            self._write_project_state(status)
+            self._cleanup(request.repository, status)
+            return status
+
+        retained = current if current and current.process.poll() is None else None
+        candidate = None
         try:
+            if retained is not None:
+                previous_commit = retained.commit
+                # Exercise the candidate on a temporary loopback port while
+                # the last-good process continues serving its stable port.
+                probe_runtime = replace(runtime, port=self._available_loopback_port())
+                candidate = self._start_release(request.repository, request.commit, release, probe_runtime)
+                self._active[request.repository] = retained
+                self._health(candidate)
+                self._stop_preview(candidate)
+                candidate = None
+                self._active[request.repository] = retained
+                self._stop_preview(retained)
+                retained = None
+
             candidate = self._start_release(request.repository, request.commit, release, runtime)
             self._health(candidate)
         except (OSError, subprocess.SubprocessError, PreviewManagerError) as exc:
-            failed = self._active.get(request.repository)
-            if failed:
-                self._stop_preview(failed)
-            rollback = None
+            if candidate is not None:
+                self._stop_preview(candidate)
+            rollback = retained
+            if rollback is not None:
+                self._active[request.repository] = rollback
             rollback_error = ""
-            if previous_commit:
+            if rollback is None and previous_commit:
                 previous_release = self._release_dir(request.repository, previous_commit)
                 try:
                     previous_runtime = self._runtime_for_release(previous_release)
@@ -398,7 +450,7 @@ class PreviewManager:
                 last_good_commit=previous_commit,
                 state="rollback" if rollback else "failed",
                 runtime=rollback.runtime if rollback else runtime,
-                detail=f"candidate failed health; last good preview restored: {type(exc).__name__}: {exc}{rollback_error}",
+                detail=f"candidate failed health; last good preview retained: {type(exc).__name__}: {exc}{rollback_error}",
             )
             self._write_project_state(status)
             self._cleanup(request.repository, status)
@@ -505,7 +557,7 @@ class PreviewManager:
             try:
                 payload = json.loads(state_path.read_text(encoding="utf-8"))
                 status = PreviewStatus(**payload)
-                if allowed is not None and status.repository not in allowed:
+                if status.repository not in allowed:
                     stopped = self._write_status(
                         status.repository,
                         desired_commit=status.desired_commit,
@@ -535,6 +587,7 @@ class PreviewManager:
                     detail="last good preview restored after manager start",
                 )
                 self._write_project_state(restored)
+                self._cleanup(status.repository, restored)
             except (OSError, ValueError, TypeError, subprocess.SubprocessError, IdeaContractError, PreviewManagerError) as exc:
                 if status is not None:
                     failed = self._write_status(
@@ -557,8 +610,8 @@ class PreviewManager:
             request = None
             try:
                 request = self._load_request(request_path)
-                if allowed is not None and request.repository not in allowed:
-                    self._write_status(
+                if request.repository not in allowed:
+                    stopped = self._write_status(
                         request.repository,
                         desired_commit=request.commit,
                         active_commit=None,
@@ -571,6 +624,8 @@ class PreviewManager:
                         runtime=None,
                         detail="preview request rejected because the repository is not ideas-allowlisted",
                     )
+                    self._write_project_state(stopped)
+                    self._cleanup(request.repository, stopped)
                     continue
                 self._write_status(
                     request.repository,
@@ -590,15 +645,19 @@ class PreviewManager:
                     payload = json.loads(request_path.read_text(encoding="utf-8"))
                     repository = str(payload.get("repository") or "")
                     if repository:
-                        self._write_status(
+                        previous = self._read_status(repository)
+                        active = self._active.get(repository)
+                        failed = self._write_status(
                             repository,
                             desired_commit=str(payload.get("commit") or "") or None,
-                            active_commit=None,
-                            last_good_commit=None,
-                            state="failed",
-                            runtime=None,
+                            active_commit=active.commit if active and active.process.poll() is None else None,
+                            last_good_commit=previous.last_good_commit if previous else None,
+                            state="rollback" if active and active.process.poll() is None else "failed",
+                            runtime=active.runtime if active and active.process.poll() is None else None,
                             detail=f"invalid preview request: {type(exc).__name__}: {exc}",
                         )
+                        self._write_project_state(failed)
+                        self._cleanup(repository, failed)
                 except Exception:
                     pass
             finally:

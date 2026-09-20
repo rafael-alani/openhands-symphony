@@ -18,4 +18,5 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/openhands-symphony /var/log/openhands-symphony
+ReadWritePaths=/var/lib/openhands-preview -/obsidian
 UMask=0077

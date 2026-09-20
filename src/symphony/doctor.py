@@ -653,4 +653,11 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
             )
         )
     checks.extend(_idea_project_checks(config, store))
+    if config.vault.enabled:
+        root = config.vault.path
+        projects = root / config.vault.projects_dir
+        writable = root.is_dir() and projects.is_dir() and os.access(root, os.R_OK | os.W_OK) and os.access(projects, os.R_OK | os.W_OK)
+        checks.append(Check("Syncthing vault access", writable, f"notes={projects}; results={root / '_symphony'}"))
+        errors = [f"{p['repository']}: {p['error']}" for p in store.vault_projects() if p["status"] == "error"]
+        checks.append(Check("vault routing", not errors, "; ".join(errors) or "registered projects have no routing errors"))
     return checks

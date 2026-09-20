@@ -4,9 +4,12 @@ import asyncio
 import hashlib
 import hmac
 import json
+import socket
 import subprocess
+import time
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -15,9 +18,9 @@ from conftest import FakeGitHub, issue, make_config
 from symphony.config import IdeasConfig
 from symphony.coordinator import Coordinator
 from symphony.execution import ProviderSlots
-from symphony.ideas_contract import IdeaContractError, git_blob_hash, parse_runtime, validate_spec
+from symphony.ideas_contract import IdeaContractError, git_blob_hash, parse_runtime, preview_argv, validate_spec
 from symphony.ideas_coordinator import IdeasCoordinator
-from symphony.ideas_preview import PreviewEvidence
+from symphony.ideas_preview import IdeaPreview, PreviewEvidence
 from symphony.models import IdeaRunState, IdeaSnapshot, ProviderOutcome
 from symphony.preview_queue import PreviewQueue
 from symphony.providers.fake import FakeProvider
@@ -30,6 +33,56 @@ RUNTIME = (
     b'provider = "codex"\n\n[preview]\nstart = ["python3", "-m", "app"]\n'
     b'port = 4317\nhealth_path = "/health"\nstartup_timeout_seconds = 20\n'
 )
+
+
+def test_preview_argv_renders_effective_port_placeholder():
+    runtime = parse_runtime(
+        b'provider = "codex"\n[preview]\nstart = ["python3", "-m", "app", "--port", "{port}"]\n'
+        b'port = 4317\nhealth_path = "/health"\nstartup_timeout_seconds = 20\n'
+    )
+
+    assert preview_argv(runtime) == ("python3", "-m", "app", "--port", "4317")
+
+
+def test_prepublication_preview_does_not_probe_the_stable_last_good_port(tmp_path):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        stable_port = int(probe.getsockname()[1])
+
+    old_preview = subprocess.Popen(
+        ["python3", "-m", "http.server", str(stable_port), "--bind", "127.0.0.1"],
+        cwd=tmp_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        old_health = f"http://127.0.0.1:{stable_port}/"
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                if httpx.get(old_health, timeout=0.25).is_success:
+                    break
+            except httpx.HTTPError:
+                pass
+            time.sleep(0.05)
+        else:
+            pytest.fail("last-good preview fixture did not become healthy")
+
+        runtime = parse_runtime(
+            (
+                'provider = "codex"\n[preview]\n'
+                'start = ["python3", "-m", "http.server", "{port}", "--bind", "127.0.0.1"]\n'
+                f'port = {stable_port}\nhealth_path = "/"\nstartup_timeout_seconds = 5\n'
+            ).encode()
+        )
+        evidence = IdeaPreview("", tmp_path / "state").boot_and_capture(tmp_path, runtime, ())
+
+        assert urlsplit(evidence.health_url).port != stable_port
+        assert old_preview.poll() is None
+    finally:
+        if old_preview.poll() is None:
+            old_preview.terminate()
+        old_preview.wait(timeout=5)
 
 
 def _run(command: list[str], cwd: Path | None = None) -> str:
@@ -231,6 +284,12 @@ def test_idea_contract_is_strict_and_runtime_uses_argument_array():
         validate_spec(SPEC.replace(b"repo: solo/idea", b"repo: solo/idea\nextra: no"), "solo/idea")
     with pytest.raises(IdeaContractError, match="argument array"):
         parse_runtime(RUNTIME.replace(b'["python3", "-m", "app"]', b'"python3 -m app"'))
+    with pytest.raises(IdeaContractError, match="safe non-empty name"):
+        parse_runtime(RUNTIME.replace(b'provider = "codex"', b'provider = "bad provider"'))
+    with pytest.raises(IdeaContractError, match="without a query or fragment"):
+        parse_runtime(RUNTIME.replace(b'health_path = "/health"', b'health_path = "//other-host/health"'))
+    with pytest.raises(IdeaContractError, match="positive integer"):
+        parse_runtime(RUNTIME.replace(b"startup_timeout_seconds = 20", b"startup_timeout_seconds = 1.5"))
 
 
 def test_duplicate_push_webhooks_create_one_idea_run(tmp_path):

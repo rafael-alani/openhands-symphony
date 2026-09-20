@@ -56,8 +56,11 @@ class IdeasCoordinator:
         self.reports = IdeaReportWriter(config.service.report_dir, store)
         self._active_runs: dict[str, tuple[ProviderAdapter, ProviderRun]] = {}
         self._active_lock = threading.Lock()
+        self.vault = None
 
     def observe(self, snapshot: IdeaSnapshot) -> tuple[IdeaRun, bool]:
+        if not self.store.vault_allows(snapshot.repository, "idea"):
+            raise IdeasIntakeError("Ideas intake is suspended by the project note")
         if snapshot.repository not in self.config.ideas.repositories:
             raise IdeasIntakeError(f"repository is not ideas-allowlisted: {snapshot.repository}")
         if not snapshot.private:
@@ -311,6 +314,13 @@ class IdeasCoordinator:
 
     def _guard_publication(self, run: IdeaRun, worktree: Path) -> IdeaSnapshot:
         self._require_running(run)
+        if self.vault is not None:
+            from .vault import VaultError
+
+            try:
+                self.vault.guard_spec(run.repository, run.spec_content)
+            except (VaultError, OSError) as exc:
+                raise StaleIdeaError(str(exc)) from exc
         if run.repository not in self.config.ideas.repositories or run.repository in self.config.github.allowed_repositories:
             raise StaleIdeaError("repository is no longer exclusively ideas-allowlisted")
         live = self.github.get_snapshot(
@@ -416,6 +426,13 @@ class IdeasCoordinator:
                 self.config.service.global_agent_instruction,
                 self.config.repository(run.repository).instruction,
             )
+            if self.vault is not None:
+                from .vault import VaultError
+
+                try:
+                    prompt += "\n\n" + self.vault.checklist_context(run.repository, run.spec_content)
+                except (VaultError, OSError) as exc:
+                    raise StaleIdeaError(str(exc)) from exc
             with self._provider_slot(run, provider):
                 provider_run = provider.start(worktree, prompt, run.id)
                 run = self.store.begin_idea_attempt(
@@ -468,6 +485,15 @@ class IdeasCoordinator:
                     "provider-failed",
                     result.question_or_reason or result.summary,
                 )
+            # The implementation may introduce a new toolchain/setup script.
+            setup = self.workspaces.run_setup(
+                worktree, self.config.repository(run.repository).setup_script,
+                self.config.service.validation_user,
+            )
+            if setup:
+                self.store.record_idea_validation(run.id, run.attempt, setup)
+                if not setup.ok:
+                    raise WorkspaceError(f"post-implementation setup failed: {redact(setup.output, 4000)}")
             advisory_ok, validation_summary = self._advisory_validations(run, worktree)
             run = self.store.update_idea_run(run.id, validation_summary=validation_summary, phase="preview")
             current_runtime = parse_runtime((worktree / ".symphony/idea.toml").read_bytes())

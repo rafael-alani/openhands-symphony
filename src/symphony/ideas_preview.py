@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import socket
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import httpx
 
-from .ideas_contract import IdeaRuntime
+from .ideas_contract import IdeaRuntime, preview_argv
 from .ideas_progress import IdeaSection, screenshot_path
 from .validation import redact, validation_argv, validation_environment
 
@@ -28,22 +29,42 @@ class IdeaPreview:
         self.validation_user = validation_user
         self.harness_home = state_dir / "browser-harness"
 
+    @staticmethod
+    def _available_loopback_port(declared_port: int) -> int:
+        for _attempt in range(10):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = int(probe.getsockname()[1])
+            if port != declared_port:
+                return port
+        raise PreviewError("unable to allocate a temporary preview port")
+
     def boot_and_capture(
         self,
         worktree: Path,
         runtime: IdeaRuntime,
         affected: tuple[IdeaSection, ...],
     ) -> PreviewEvidence:
-        command = validation_argv(runtime.start, self.validation_user)
+        # A persistent last-good release may already own runtime.port. Every
+        # pre-publication boot therefore uses a separate effective port so the
+        # mandatory health check and screenshots can only target this candidate.
+        effective_runtime = replace(runtime, port=self._available_loopback_port(runtime.port))
+        preview_variables = {
+            "HOST": "127.0.0.1",
+            "PORT": str(effective_runtime.port),
+        }
+        command = validation_argv(preview_argv(effective_runtime), self.validation_user, preview_variables)
+        preview_environment = validation_environment()
+        preview_environment.update(preview_variables)
         process = subprocess.Popen(
             command,
             cwd=worktree,
-            env=validation_environment(),
+            env=preview_environment,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
-        health_url = f"http://127.0.0.1:{runtime.port}{runtime.health_path}"
+        health_url = f"http://127.0.0.1:{effective_runtime.port}{effective_runtime.health_path}"
         deadline = time.monotonic() + runtime.startup_timeout_seconds
         log = ""
         try:
@@ -78,7 +99,7 @@ class IdeaPreview:
                 target = worktree / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 script = (
-                    f'new_tab("http://127.0.0.1:{runtime.port}/")\n'
+                    f'new_tab("http://127.0.0.1:{effective_runtime.port}/")\n'
                     "wait_for_load()\n"
                     f'capture_screenshot(r"{target}", max_dim=1280)\n'
                 )

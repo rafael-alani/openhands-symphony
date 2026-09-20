@@ -18,6 +18,42 @@ The design borrows only the requested ClawSweeper patterns—analysis/mutation s
 
 Use `/agent pause`, `/agent resume`, `/agent retry`, or `/agent cancel` in an issue comment. Commands are accepted only from an owner, member, or collaborator.
 
+## Obsidian projects
+
+Syncthing carries normal Markdown notes into `/obsidian/1. Projects & Tasks`
+on the VM. Enable `[vault]` once; then a note such as `Dinner planner.md` is
+enough:
+
+```markdown
+---
+symphony: idea
+---
+Build a dinner planner from ingredients I already have.
+```
+
+Symphony creates a private repository, records its name in the note's `repo`
+property, generates the internal runtime contract, and builds from note edits.
+Progress and screenshots return under `/obsidian/_symphony/`. No Mac-side
+`ideasync`, manual repository creation, or per-project allowlist edit is needed.
+
+Folder notes work with a brief plus `- [ ] [[Feature note]]` rows or a Markdown
+checkbox table above Waypoint. Symphony includes those subfiles, ticks successful
+work, and reopens a file when its content changes. The generated Waypoint index
+is ignored for intake. Use `agentctl vault-check PATH --vault-root /obsidian`
+to validate project input without creating a repository or running a model.
+
+Change `symphony` to `github` for labeled issue → draft PR development, back to
+`idea` for direct prototyping, or to `paused` to stop intake. Active work drains
+before switching; existing issues, PRs, code, and the note remain intact.
+The old `graduate` archival command is only for legacy Git-spec projects.
+
+Claude and Codex implementation sessions default to full provider permissions
+inside the dedicated VM. Reviews remain read-only. Preview setup can download
+dependencies and build each fresh release using `.openhands/setup.sh`.
+
+See [Syncthing/Obsidian setup and operation](docs/obsidian.md). Hackathon mode
+remains a [separate proposal](docs/hack-tier.md).
+
 ## Clean install
 
 The preferred target is an unprivileged service on an Ubuntu 26.04 LTS Proxmox **VM** (not LXC). Ubuntu 24.04 LTS remains supported as a fallback. From a fresh VM:
@@ -94,6 +130,7 @@ The OpenHands single-user baseline is smaller; these allocations include agent C
 - [State machine](docs/state-machine.md)
 - [GitHub and label contract](docs/github-contract.md)
 - [Provider adapter contract and support matrix](docs/providers.md)
+- [VibeProxy integration proposal](docs/vibeproxy-integration.md)
 - [Browser tooling](docs/browser.md)
 - [Security model](docs/security.md)
 - [Configuration reference](docs/configuration.md)

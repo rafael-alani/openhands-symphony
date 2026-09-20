@@ -4,10 +4,11 @@ import plistlib
 from collections.abc import Callable
 from pathlib import Path
 
-from conftest import REPOSITORY, Harness
+from conftest import REPOSITORY, Harness, git, graduate_remote
 
 from ideasync import cli
 from ideasync.cli import main
+from ideasync.config import load_config
 
 
 def tree_contents(root: Path) -> dict[str, bytes]:
@@ -53,11 +54,53 @@ def test_add_and_schedule_dry_runs_create_nothing(
     assert after == before
 
 
+def test_remove_deregisters_only_a_graduated_repo_and_preserves_vault(
+    harness_factory: Callable[..., Harness],
+) -> None:
+    harness = harness_factory()
+    graduate_remote(harness)
+    synced = harness.invoke("sync", REPOSITORY)
+    assert synced.code == 0, synced.stderr
+    head = git("rev-parse", "HEAD", cwd=harness.managed_clone).stdout.strip()
+    vault_before = tree_contents(harness.vault_directory)
+    data_before = tree_contents(harness.data)
+
+    preview = harness.invoke("remove", REPOSITORY, "--dry-run")
+
+    assert preview.code == 0, preview.stderr
+    assert "vault files would be preserved" in preview.stdout
+    assert tree_contents(harness.data) == data_before
+    assert tree_contents(harness.vault_directory) == vault_before
+
+    removed = harness.invoke("remove", REPOSITORY)
+    after = harness.invoke("sync")
+
+    assert removed.code == 0, removed.stderr
+    assert "vault preserved" in removed.stdout
+    assert not harness.managed_clone.exists()
+    assert (harness.paths.retired_clone_for(REPOSITORY) / head).is_dir()
+    assert load_config(harness.paths).repository(REPOSITORY) is None
+    assert tree_contents(harness.vault_directory) == vault_before
+    assert after.code == 0
+    assert "no repositories configured" in after.stdout
+
+
+def test_remove_refuses_an_active_ideas_repository(harness_factory: Callable[..., Harness]) -> None:
+    harness = harness_factory()
+
+    removed = harness.invoke("remove", REPOSITORY)
+
+    assert removed.code == 1
+    assert "graduate the repository before removing it" in removed.stderr
+    assert harness.managed_clone.is_dir()
+    assert load_config(harness.paths).repository(REPOSITORY) is not None
+
+
 def test_doctor_and_open_dry_run(harness_factory: Callable[..., Harness]) -> None:
     harness = harness_factory()
 
     doctor = harness.invoke("doctor")
-    opened = harness.invoke("open", REPOSITORY, "--host", "ideas-vm", "--dry-run")
+    opened = harness.invoke("open", REPOSITORY, "--dry-run")
 
     assert doctor.code == 0, doctor.stderr
     assert "clone and contracts are healthy" in doctor.stdout
@@ -94,3 +137,21 @@ def test_open_starts_tunnel_and_browser(harness_factory: Callable[..., Harness],
     assert commands[0][-4:] == ["-L", "127.0.0.1:14317:127.0.0.1:4317", "--", "ideas-vm"]
     assert opened == ["http://127.0.0.1:14317/"]
     assert "closed preview tunnel" in result.stdout
+
+
+def test_open_uses_pinned_port_when_latest_contract_drifted(
+    harness_factory: Callable[..., Harness],
+) -> None:
+    harness = harness_factory()
+    contract = harness.managed_clone / ".symphony" / "idea.toml"
+    contract.write_text(contract.read_text().replace("4317", "5317"))
+    git("add", ".symphony/idea.toml", cwd=harness.managed_clone)
+    git("commit", "-m", "change preview port", cwd=harness.managed_clone)
+
+    opened = harness.invoke("open", REPOSITORY, "--dry-run")
+    doctor = harness.invoke("doctor")
+
+    assert opened.code == 0, opened.stderr
+    assert "127.0.0.1:4317:127.0.0.1:4317" in opened.stdout
+    assert doctor.code == 1
+    assert "preview port changed from pinned port 4317 to 5317" in doctor.stdout

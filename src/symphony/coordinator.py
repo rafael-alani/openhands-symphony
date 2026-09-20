@@ -51,6 +51,20 @@ class Coordinator:
         self._active_lock = threading.Lock()
         self._operation_owner = f"coordinator:{uuid.uuid4()}"
         self.provider_slots = provider_slots or ProviderSlots(config.scheduler.provider_concurrency, set(providers))
+        self.vault = None
+
+    def apply_vault_config(self) -> None:
+        if self.vault is None:
+            return
+        self.config = self.vault.effective_config()
+        self.github.allowlist = set(self.config.github.allowed_repositories)
+        self.ideas.config = self.config
+        self.ideas.github.allowlist = set(self.config.ideas.repositories)
+
+    def refresh_vault(self) -> None:
+        if self.vault is not None:
+            self.vault.reconcile()
+            self.apply_vault_config()
 
     def _available_reviewers(self) -> set[str]:
         candidates: set[str] = set()
@@ -68,6 +82,8 @@ class Coordinator:
         return candidates
 
     def enqueue(self, snapshot: IssueSnapshot) -> tuple[Job, bool]:
+        if not self.store.vault_allows(snapshot.repository, "github"):
+            raise IntakeError("GitHub issue intake is suspended by the project note")
         if snapshot.repository not in self.config.github.allowed_repositories:
             raise IntakeError(f"repository is not allowlisted: {snapshot.repository}")
         if self.config.github.private_only and not snapshot.private:
@@ -229,6 +245,8 @@ class Coordinator:
     def reconcile(self) -> list[tuple[str, int, str]]:
         results = self.recover_expired_leases()
         for job in self.store.list_jobs({JobState.PR_OPEN}):
+            if job.repository not in self.config.github.allowed_repositories:
+                continue
             if not job.pr_number:
                 continue
             try:
@@ -256,6 +274,8 @@ class Coordinator:
             except GitHubError as exc:
                 results.append((job.repository, job.issue_number, f"pr-status-error: {exc}"))
         for repository in self.config.github.allowed_repositories:
+            if not self.store.vault_allows(repository, "github"):
+                continue
             try:
                 for snapshot in self.github.list_ready_issues(repository):
                     try:

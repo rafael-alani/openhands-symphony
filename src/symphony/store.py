@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -24,7 +25,7 @@ from .models import (
     utcnow,
 )
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 8
 ISSUE_RUN_KIND = "github-issue"
 IDEA_RUN_KIND = "idea-spec"
 
@@ -253,8 +254,7 @@ class Store:
                         heartbeat_at TEXT,
                         finished_at TEXT,
                         retry_requested INTEGER NOT NULL DEFAULT 0,
-                        cancel_requested INTEGER NOT NULL DEFAULT 0,
-                        UNIQUE(repository, spec_hash)
+                        cancel_requested INTEGER NOT NULL DEFAULT 0
                     );
                     CREATE INDEX idea_runs_queue_idx ON idea_runs(state, retry_requested DESC, created_at);
                     CREATE INDEX idea_runs_provider_idx ON idea_runs(implementation_provider, state);
@@ -280,7 +280,6 @@ class Store:
                     );
                     """
                 )
-                connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             else:
                 if version == 1:
                     columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)").fetchall()}
@@ -304,7 +303,139 @@ class Store:
                     self._migrate_source_neutral_leases(connection)
                 if version < 5:
                     self._migrate_ideas_tables(connection)
-                connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+            self._migrate_idea_observations(connection)
+
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS vault_projects (
+                    repository TEXT PRIMARY KEY,
+                    note_path TEXT NOT NULL UNIQUE,
+                    mode TEXT NOT NULL DEFAULT 'paused',
+                    desired_mode TEXT NOT NULL DEFAULT 'paused',
+                    port INTEGER NOT NULL UNIQUE,
+                    managed INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS vault_checklist (
+                    repository TEXT NOT NULL REFERENCES vault_projects(repository),
+                    source TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    done INTEGER NOT NULL DEFAULT 0,
+                    completed_commit TEXT,
+                    PRIMARY KEY(repository, source)
+                )
+            """)
+            connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+    @staticmethod
+    def _migrate_idea_observations(connection: sqlite3.Connection) -> None:
+        """Retain a new run when an older specification becomes current again."""
+        sql = connection.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='idea_runs'").fetchone()[0]
+        updated = re.sub(r",\s*UNIQUE\s*\(repository,\s*spec_hash\)", "", sql, flags=re.I)
+        if updated != sql:
+            indexes = [row[0] for row in connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='idea_runs' AND sql IS NOT NULL"
+            )]
+            # Child-table FK names remain valid: create/copy/drop, without renaming the old table.
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                definition = re.sub(r'CREATE TABLE (?:IF NOT EXISTS )?"?idea_runs"?', "CREATE TABLE idea_runs_v8", updated, count=1, flags=re.I)
+                connection.execute(definition)
+                connection.execute("INSERT INTO idea_runs_v8 SELECT * FROM idea_runs")
+                connection.execute("DROP TABLE idea_runs")
+                connection.execute("ALTER TABLE idea_runs_v8 RENAME TO idea_runs")
+                for statement in indexes:
+                    connection.execute(statement)
+                if connection.execute("PRAGMA foreign_key_check").fetchone():
+                    raise StoreError("idea-run migration failed foreign-key verification")
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+            finally:
+                connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("CREATE INDEX IF NOT EXISTS idea_runs_spec_idx ON idea_runs(repository,spec_hash)")
+
+    def observe_vault_checklist(self, repository: str, sources: list[tuple[str, str, bool]]) -> dict[str, bool]:
+        """Remember content versions; changed files reopen independently of filesystem timestamps."""
+        result = {}
+        with self.transaction() as connection:
+            for source, digest, checked in sources:
+                row = connection.execute(
+                    "SELECT * FROM vault_checklist WHERE repository=? AND source=?", (repository, source),
+                ).fetchone()
+                done = checked if row is None else bool(row["done"]) and row["content_hash"] == digest
+                connection.execute(
+                    """INSERT INTO vault_checklist(repository,source,content_hash,done) VALUES (?,?,?,?)
+                       ON CONFLICT(repository,source) DO UPDATE SET content_hash=excluded.content_hash,
+                       done=excluded.done, completed_commit=CASE WHEN content_hash=excluded.content_hash
+                       THEN completed_commit ELSE NULL END""", (repository, source, digest, int(done)),
+                )
+                result[source] = done
+        return result
+
+    def complete_vault_checklist(self, repository: str, sources: list[tuple[str, str]], commit: str) -> None:
+        with self.transaction() as connection:
+            for source, digest in sources:
+                connection.execute(
+                    """UPDATE vault_checklist SET done=1,completed_commit=?
+                       WHERE repository=? AND source=? AND content_hash=?""", (commit, repository, source, digest),
+                )
+
+    def vault_projects(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            return [dict(row) for row in connection.execute("SELECT * FROM vault_projects ORDER BY repository")]
+
+    def register_vault_project(
+        self, repository: str, note_path: str, *, managed: bool, port_start: int, port_end: int,
+    ) -> dict[str, Any]:
+        with self.transaction() as connection:
+            row = connection.execute("SELECT * FROM vault_projects WHERE repository=?", (repository,)).fetchone()
+            if row is None:
+                used = {row[0] for row in connection.execute("SELECT port FROM vault_projects")}
+                port = next((value for value in range(port_start, port_end + 1) if value not in used), None)
+                if port is None:
+                    raise StoreError("vault preview port range is exhausted")
+                connection.execute(
+                    "INSERT INTO vault_projects(repository,note_path,port,managed) VALUES (?,?,?,?)",
+                    (repository, note_path, port, int(managed)),
+                )
+            else:
+                connection.execute("UPDATE vault_projects SET note_path=? WHERE repository=?", (note_path, repository))
+            return dict(connection.execute("SELECT * FROM vault_projects WHERE repository=?", (repository,)).fetchone())
+
+    def request_vault_mode(self, repository: str, mode: str, *, status: str = "pending", error: str = "") -> None:
+        if mode not in {"idea", "github", "paused"}:
+            raise StoreError("invalid vault mode")
+        with self.transaction() as connection:
+            connection.execute(
+                "UPDATE vault_projects SET desired_mode=?,status=?,error=? WHERE repository=?",
+                (mode, status, error, repository),
+            )
+
+    def activate_vault_mode(self, repository: str) -> bool:
+        """Drain existing work before a reversible switch; claims use the same transaction boundary."""
+        with self.transaction() as connection:
+            if connection.execute("SELECT 1 FROM leases WHERE repository=?", (repository,)).fetchone():
+                return False
+            connection.execute(
+                "UPDATE vault_projects SET mode=desired_mode,status=CASE WHEN status='error' THEN status ELSE 'ready' END WHERE repository=?",
+                (repository,),
+            )
+            return True
+
+    def repository_has_lease(self, repository: str) -> bool:
+        with self.connect() as connection:
+            return connection.execute("SELECT 1 FROM leases WHERE repository=?", (repository,)).fetchone() is not None
+
+    def vault_allows(self, repository: str, mode: str) -> bool:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM vault_projects WHERE repository=?", (repository,)).fetchone()
+            return row is None or (row["mode"] == row["desired_mode"] == mode and row["status"] == "ready")
 
     @staticmethod
     def _migrate_source_neutral_leases(connection: sqlite3.Connection) -> None:
@@ -384,8 +515,7 @@ class Store:
                 heartbeat_at TEXT,
                 finished_at TEXT,
                 retry_requested INTEGER NOT NULL DEFAULT 0,
-                cancel_requested INTEGER NOT NULL DEFAULT 0,
-                UNIQUE(repository, spec_hash)
+                cancel_requested INTEGER NOT NULL DEFAULT 0
             )
             """,
             "CREATE INDEX IF NOT EXISTS idea_runs_queue_idx ON idea_runs(state, retry_requested DESC, created_at)",
@@ -482,7 +612,7 @@ class Store:
         with self.connect() as connection:
             return self._idea_run(
                 connection.execute(
-                    "SELECT * FROM idea_runs WHERE repository=? AND spec_hash=?", (repository, spec_hash)
+                    "SELECT * FROM idea_runs WHERE repository=? AND spec_hash=? ORDER BY rowid DESC LIMIT 1", (repository, spec_hash)
                 ).fetchone()
             )
 
@@ -502,12 +632,80 @@ class Store:
                 rows = connection.execute("SELECT * FROM idea_runs ORDER BY created_at").fetchall()
         return [self._idea_run(row) for row in rows if row is not None]
 
+    def supersede_active_idea_runs(self, repository: str, reason: str) -> list[str]:
+        """Retire durable Ideas work after its repository has safely graduated."""
+
+        now = utcnow()
+        retired: list[str] = []
+        with self.transaction() as connection:
+            rows = connection.execute(
+                "SELECT id FROM idea_runs WHERE repository=? AND state IN (?, ?, ?) ORDER BY created_at",
+                (
+                    repository,
+                    IdeaRunState.DISCOVERED,
+                    IdeaRunState.QUEUED,
+                    IdeaRunState.RUNNING,
+                ),
+            ).fetchall()
+            for row in rows:
+                run_id = str(row["id"])
+                connection.execute(
+                    """
+                    UPDATE idea_runs SET state=?, phase='graduated', cancel_requested=1,
+                        question=?, lease_owner=NULL, lease_expires_at=NULL,
+                        updated_at=?, finished_at=? WHERE id=?
+                    """,
+                    (IdeaRunState.SUPERSEDED, reason, now, now, run_id),
+                )
+                RepositoryLeases.release(connection, IDEA_RUN_KIND, run_id)
+                connection.execute(
+                    "INSERT INTO idea_run_events(run_id, at, kind, detail_json) VALUES (?, ?, 'graduated', ?)",
+                    (run_id, now, json.dumps({"reason": reason}, sort_keys=True)),
+                )
+                retired.append(run_id)
+        return retired
+
+    def restore_graduated_idea_runs(self, repository: str, run_ids: list[str], reason: str) -> list[str]:
+        """Requeue work retired by a graduation that failed before publication."""
+
+        if not run_ids:
+            return []
+        now = utcnow()
+        restored: list[str] = []
+        with self.transaction() as connection:
+            for run_id in run_ids:
+                row = connection.execute(
+                    "SELECT state, phase FROM idea_runs WHERE id=? AND repository=?",
+                    (run_id, repository),
+                ).fetchone()
+                if row is None or IdeaRunState(row["state"]) != IdeaRunState.SUPERSEDED or row["phase"] != "graduated":
+                    continue
+                connection.execute(
+                    """
+                    UPDATE idea_runs SET state=?, phase='graduation-rollback', cancel_requested=0,
+                        retry_requested=1, question=?, lease_owner=NULL, lease_expires_at=NULL,
+                        heartbeat_at=NULL, updated_at=?, finished_at=NULL WHERE id=?
+                    """,
+                    (IdeaRunState.QUEUED, reason, now, run_id),
+                )
+                RepositoryLeases.release(connection, IDEA_RUN_KIND, run_id)
+                connection.execute(
+                    "INSERT INTO idea_run_events(run_id, at, kind, detail_json) "
+                    "VALUES (?, ?, 'graduation-rolled-back', ?)",
+                    (run_id, now, json.dumps({"reason": reason}, sort_keys=True)),
+                )
+                restored.append(run_id)
+        return restored
+
     def ensure_idea_run(
         self, snapshot: IdeaSnapshot, implementation_provider: str
     ) -> tuple[IdeaRun, bool, list[IdeaRun]]:
         now = utcnow()
         run_id = str(uuid.uuid4())
         with self.transaction() as connection:
+            prior = connection.execute(
+                "SELECT latest_observed_spec_hash FROM idea_projects WHERE repository=?", (snapshot.repository,),
+            ).fetchone()
             connection.execute(
                 """
                 INSERT INTO idea_projects(repository, latest_observed_spec_hash, preview_state, updated_at)
@@ -519,10 +717,10 @@ class Store:
                 (snapshot.repository, snapshot.spec_hash, now),
             )
             existing = connection.execute(
-                "SELECT * FROM idea_runs WHERE repository=? AND spec_hash=?",
+                "SELECT * FROM idea_runs WHERE repository=? AND spec_hash=? ORDER BY rowid DESC LIMIT 1",
                 (snapshot.repository, snapshot.spec_hash),
             ).fetchone()
-            if existing:
+            if existing and prior and prior["latest_observed_spec_hash"] == snapshot.spec_hash:
                 return self._idea_run(existing), False, []  # type: ignore[return-value]
             older_rows = connection.execute(
                 """
@@ -601,7 +799,8 @@ class Store:
                 """
                 SELECT r.* FROM idea_projects p
                 JOIN idea_runs r ON r.repository=p.repository AND r.spec_hash=p.latest_completed_spec_hash
-                WHERE p.repository=?
+                WHERE p.repository=? AND r.state IN ('published', 'question')
+                ORDER BY r.finished_at DESC, r.rowid DESC LIMIT 1
                 """,
                 (repository,),
             ).fetchone()
@@ -815,6 +1014,7 @@ class Store:
         lease_seconds: int,
         global_limit: int,
         provider_limits: dict[str, int],
+        allowed_repositories: tuple[str, ...] | None = None,
     ) -> Job | None:
         now_dt = datetime.now(UTC)
         now = now_dt.isoformat()
@@ -828,6 +1028,10 @@ class Store:
                 SELECT j.* FROM jobs j
                 LEFT JOIN provider_backoff b ON b.provider=j.implementation_provider AND b.until_at>?
                 WHERE j.state=? AND j.cancel_requested=0 AND j.pause_requested=0 AND b.provider IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM vault_projects v WHERE v.repository=j.repository
+                    AND (v.mode!='github' OR v.desired_mode!=v.mode OR v.status!='ready')
+                  )
                   AND NOT EXISTS (
                     SELECT 1 FROM leases l WHERE l.concurrency_key=j.concurrency_key
                   )
@@ -846,6 +1050,8 @@ class Store:
             ).fetchall()
             chosen: sqlite3.Row | None = None
             for row in rows:
+                if allowed_repositories is not None and row["repository"] not in allowed_repositories:
+                    continue
                 provider = str(row["implementation_provider"])
                 if provider_counts.get(provider, 0) < provider_limits.get(provider, 1):
                     chosen = row
@@ -888,6 +1094,7 @@ class Store:
         lease_seconds: int,
         global_limit: int,
         provider_limits: dict[str, int],
+        allowed_repositories: tuple[str, ...] | None = None,
     ) -> IdeaRun | None:
         now_dt = datetime.now(UTC)
         now = now_dt.isoformat()
@@ -901,6 +1108,10 @@ class Store:
                 LEFT JOIN provider_backoff b ON b.provider=r.implementation_provider AND b.until_at>?
                 WHERE r.state=? AND r.cancel_requested=0 AND b.provider IS NULL
                   AND NOT EXISTS (
+                    SELECT 1 FROM vault_projects v WHERE v.repository=r.repository
+                    AND (v.mode!='idea' OR v.desired_mode!=v.mode OR v.status!='ready')
+                  )
+                  AND NOT EXISTS (
                     SELECT 1 FROM leases l WHERE l.concurrency_key=r.repository
                   )
                 ORDER BY r.retry_requested DESC, r.updated_at ASC, r.created_at ASC
@@ -909,6 +1120,8 @@ class Store:
             ).fetchall()
             chosen: sqlite3.Row | None = None
             for row in rows:
+                if allowed_repositories is not None and row["repository"] not in allowed_repositories:
+                    continue
                 provider = str(row["implementation_provider"])
                 if provider_counts.get(provider, 0) < provider_limits.get(provider, 1):
                     chosen = row

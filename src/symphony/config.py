@@ -46,6 +46,19 @@ class IdeasConfig:
 
 
 @dataclass(frozen=True)
+class VaultConfig:
+    enabled: bool = False
+    path: Path = Path("/obsidian")
+    projects_dir: str = "1. Projects & Tasks"
+    owner: str = ""
+    provider: str = "codex"
+    quiet_seconds: int = 30
+    port_start: int = 10000
+    port_end: int = 10999
+    manage_checkboxes: bool = True
+
+
+@dataclass(frozen=True)
 class SchedulerConfig:
     poll_seconds: int = 60
     reconcile_seconds: int = 300
@@ -70,6 +83,7 @@ class ProviderConfig:
     auth_marker_file: Path | None = None
     timeout_seconds: int = 7200
     manual_command: tuple[str, ...] = ()
+    permission_mode: str = "full"
 
 
 @dataclass(frozen=True)
@@ -91,6 +105,7 @@ class Config:
     providers: dict[str, ProviderConfig]
     repositories: dict[str, RepositoryConfig]
     ideas: IdeasConfig = IdeasConfig()
+    vault: VaultConfig = VaultConfig()
 
     def repository(self, name: str) -> RepositoryConfig:
         return self.repositories.get(name, RepositoryConfig())
@@ -168,7 +183,7 @@ def _validate_config(config: Config) -> None:
     )
     if any(_paths_overlap(config.service.preview_dir, path) for path in protected_paths):
         raise ValueError("service.preview_dir must not overlap orchestrator state, workspaces, reports, or logs")
-    if not config.github.allowed_repositories:
+    if not config.github.allowed_repositories and not config.ideas.repositories and not config.vault.enabled:
         raise ValueError("github.allowed_repositories must contain at least one repository")
     if len(set(config.github.allowed_repositories)) != len(config.github.allowed_repositories):
         raise ValueError("github.allowed_repositories contains duplicates")
@@ -189,6 +204,16 @@ def _validate_config(config: Config) -> None:
     _repository_path(config.ideas.progress_path, "progress_path")
     if config.ideas.spec_path == config.ideas.progress_path:
         raise ValueError("ideas.spec_path and ideas.progress_path must be different")
+    if config.vault.enabled:
+        if not config.vault.path.is_absolute() or config.vault.path == Path("/"):
+            raise ValueError("vault.path must be a dedicated absolute directory")
+        _repository_path(config.vault.projects_dir, "vault.projects_dir")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", config.vault.owner):
+            raise ValueError("vault.owner must be a GitHub account or organization")
+        if config.vault.provider not in config.providers or not config.providers[config.vault.provider].enabled:
+            raise ValueError("vault.provider must name an enabled provider")
+        if config.vault.quiet_seconds < 0 or not 1024 <= config.vault.port_start <= config.vault.port_end <= 65535:
+            raise ValueError("invalid vault quiet period or preview port range")
 
     scheduler = config.scheduler
     positive = {
@@ -216,6 +241,8 @@ def _validate_config(config: Config) -> None:
             raise ValueError(f"scheduler.provider_concurrency.{name} cannot be negative")
 
     for name, provider in config.providers.items():
+        if provider.permission_mode not in {"full", "restricted"}:
+            raise ValueError(f"providers.{name}.permission_mode must be full or restricted")
         if provider.adapter != "openhands-acp":
             raise ValueError(f"unsupported provider adapter for {name}: {provider.adapter}")
         if provider.timeout_seconds <= 0:
@@ -293,6 +320,18 @@ def load_config(path: str | Path | None = None) -> Config:
     )
 
     scheduler_raw = raw.get("scheduler", {})
+    vault_raw = raw.get("vault", {})
+    vault = VaultConfig(
+        enabled=bool(vault_raw.get("enabled", False)),
+        path=_path(vault_raw.get("path"), VaultConfig.path),
+        projects_dir=str(vault_raw.get("projects_dir", VaultConfig.projects_dir)),
+        owner=str(vault_raw.get("owner", "")),
+        provider=str(vault_raw.get("provider", "codex")),
+        quiet_seconds=int(vault_raw.get("quiet_seconds", 30)),
+        port_start=int(vault_raw.get("port_start", 10000)),
+        port_end=int(vault_raw.get("port_end", 10999)),
+        manage_checkboxes=bool(vault_raw.get("manage_checkboxes", True)),
+    )
     scheduler = SchedulerConfig(
         poll_seconds=int(scheduler_raw.get("poll_seconds", 60)),
         reconcile_seconds=int(scheduler_raw.get("reconcile_seconds", 300)),
@@ -323,6 +362,7 @@ def load_config(path: str | Path | None = None) -> Config:
             ),
             timeout_seconds=int(value.get("timeout_seconds", 7200)),
             manual_command=_command(value.get("manual_command")),
+            permission_mode=str(value.get("permission_mode", "restricted" if name == "antigravity" else "full")),
         )
 
     repositories: dict[str, RepositoryConfig] = {}
@@ -337,6 +377,6 @@ def load_config(path: str | Path | None = None) -> Config:
             approval_policy=str(value.get("approval_policy", "safe-code-only")),
         )
 
-    config = Config(service, github, scheduler, providers, repositories, ideas)
+    config = Config(service, github, scheduler, providers, repositories, ideas, vault)
     _validate_config(config)
     return config

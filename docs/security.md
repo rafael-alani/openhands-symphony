@@ -2,7 +2,7 @@
 
 ## Assumptions
 
-The dedicated VM is trusted but disposable. Only private, operator-controlled, explicitly allowlisted repositories are accepted. Public repositories and untrusted public pull-request execution are disabled. A coding issue grants no production authority.
+The dedicated VM is trusted but disposable. Only private, operator-controlled, explicitly allowlisted repositories or projects enabled by a note in the configured Syncthing folder are accepted. Public repositories and untrusted public pull-request execution are disabled. A coding issue grants no production authority.
 
 ## Credential separation
 
@@ -18,7 +18,7 @@ The worker has no orchestrator `gh` configuration and is not a member of the ope
 
 Antigravity's Linux credential store uses a private D-Bus socket and GNOME Secret Service daemon under the worker UID; the socket is confined to `/run/openhands-agent`. Headless Chromium exposes CDP only on worker-local loopback port 9222. Browser Harness telemetry, cloud sync, cloud auto-spawn, and Browser Use/model API keys are absent from the service environment.
 
-The preview service has systemd memory, CPU, task, file-descriptor, process, filesystem, capability, and address-family limits. Its cgroup may bind and connect only on localhost; public network access is denied. A failed candidate is stopped and the previous healthy release is restarted, so SQLite advances the last-good pointer only from the manager's health result.
+The preview service has systemd memory, CPU, task, file-descriptor, process, filesystem, capability, and address-family limits. It permits outbound connections for dependency downloads and prototype API calls. Preview commands must bind `127.0.0.1`; SSH provides operator access. A missing or malformed allowlist fails closed. A candidate is health-checked on a temporary loopback port while the previous healthy process remains active, so SQLite advances the last-good pointer only from the manager's health result.
 
 Canvas host mode is not adversarial multi-tenant isolation: Canvas and its ACP children share the worker UID because subscription credentials must be visible to those children. The Canvas localhost key is removed from the child environment, but a deliberately hostile same-UID process could inspect other same-user process state on a normally configured Linux host. Use only trusted private repositories and a disposable VM; stronger hostile-code isolation requires an additional container/VM boundary not claimed by this release.
 
@@ -28,7 +28,7 @@ A fine-grained PAT through `gh` is supported initially. Prefer a GitHub App with
 
 Issue-derived strings never enter a shell. Repository names and issue numbers are validated, branches use a restricted generated slug, commands are argv arrays, and all setup/worktree paths must resolve beneath configured roots. Setup and quality gates come from administrator config or an allowlisted repository and run without either credential set. A repository without a gate may propose one in its first architecture PR; the wrapper records its execution, but the draft remains human-reviewed before that gate becomes trusted default-branch policy. Git metadata is group-read-only to agents; the wrapper verifies the worktree pointer/metadata owner before validation or commit, disables hooks for its commit, and pushes to a validated explicit `https://github.com/owner/repo.git` URL rather than trusting mutable `origin`. Intentional quality/stop hooks must be configured as explicit validation commands or `.openhands/quality-gate.sh`.
 
-The task prompt treats issue/repository text as untrusted and denies GitHub use, deployment, credential work, and destructive migrations. The separate worker identity and wrapper-owned mutation are the enforcement boundary; the prompt is defense in depth.
+Implementation uses full provider permissions inside the VM by default; reviews retain read-only/plan mode. The wrapper continues to own GitHub publication. Notes authorize creating private repositories within `vault.owner`; a generated repo property records the stable identity. The separate worker identity and wrapper-owned mutation are the enforcement boundary; the prompt is defense in depth.
 
 ## Approval boundary
 

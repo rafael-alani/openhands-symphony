@@ -9,10 +9,12 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .config import load_config
+from .config import DEFAULT_CONFIG, load_config
 from .doctor import run_doctor
+from .graduation import GRADUATION_LOCK, GhGraduationBackend, GraduationError, Graduator, render_plan
 from .models import IdeaProject, IdeaRun, Job
 from .runtime import build_coordinator, validate_operational_config
+from .store import Store
 
 
 def _run_interactive(command: list[str], *, environment: dict[str, str] | None = None) -> int:
@@ -185,6 +187,84 @@ def _systemctl(action: str) -> int:
     return _run_interactive(["systemctl", action, "openhands-symphony.target"])
 
 
+def _target_is_active() -> bool:
+    process = subprocess.run(
+        ["systemctl", "is-active", "openhands-symphony.target"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    state = process.stdout.strip()
+    if process.returncode == 0 and state == "active":
+        return True
+    if state in {"inactive", "failed"}:
+        return False
+    detail = process.stderr.strip() or state or f"exit {process.returncode}"
+    raise GraduationError(f"unable to establish a quiescent Symphony service: {detail}")
+
+
+def _stop_for_graduation() -> int:
+    """Stop every unit capable of accepting, executing, or serving Ideas work."""
+
+    return _run_interactive(
+        [
+            "systemctl",
+            "stop",
+            "openhands-symphony.target",
+            "openhands-symphony.service",
+            "openhands-symphony-reconcile.timer",
+            "openhands-symphony-reconcile.service",
+            "openhands-idea-preview.service",
+        ]
+    )
+
+
+def _graduate(config_value: str | None, repository: str, approval_id: str | None) -> int:
+    config_path = Path(config_value or os.environ.get("SYMPHONY_CONFIG") or DEFAULT_CONFIG).expanduser().resolve()
+    config = load_config(config_path)
+    if config.vault.enabled:
+        vault_store = Store(config.service.state_dir / "state.db")
+        if any(project["repository"] == repository for project in vault_store.vault_projects()):
+            raise GraduationError("this repository is note-managed; set symphony: github in its note for a reversible switch")
+    backend = GhGraduationBackend(config.ideas.repositories, private_only=config.ideas.private_only)
+    if not approval_id:
+        plan = Graduator(config, config_path, backend).plan(repository)
+        print(render_plan(plan, config_path=config_path))
+        return 0
+
+    config.service.state_dir.mkdir(parents=True, exist_ok=True)
+    store = Store(config.service.state_dir / "state.db")
+    lock_owner = f"graduate-cli-{os.getpid()}"
+    if not store.acquire_operation_lock(GRADUATION_LOCK, lock_owner, seconds=7200):
+        raise GraduationError("another graduation operation is active")
+
+    restart_required = False
+    restart_failed = False
+    try:
+        _target_is_active()
+        restart_required = True
+        if _stop_for_graduation() != 0:
+            raise GraduationError("unable to stop Symphony before graduation")
+        result = Graduator(config, config_path, backend, store=store).apply(
+            repository,
+            approval_id,
+            operation_lock_held=True,
+        )
+    finally:
+        if restart_required and _systemctl("start") != 0:
+            restart_failed = True
+            print("graduation completed or rolled back, but Symphony could not be restarted", file=sys.stderr)
+        store.release_operation_lock(GRADUATION_LOCK, lock_owner)
+
+    print(f"graduated {repository} archive_commit={result.archive_commit}")
+    print(f"retired_ideas_runs={len(result.retired_runs)}")
+    for url in result.issue_urls:
+        print(f"draft_issue={url}")
+    for warning in result.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    return 1 if restart_failed else 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="agentctl")
     parser.add_argument("--config", default=os.environ.get("SYMPHONY_CONFIG"), help="path to config.toml")
@@ -197,7 +277,36 @@ def main() -> None:
     run.add_argument("item", type=_parse_item)
     cancel = subparsers.add_parser("cancel")
     cancel.add_argument("item", type=_parse_item)
+    graduate = subparsers.add_parser("graduate")
+    graduate.add_argument("repository")
+    graduate.add_argument("--approve", metavar="PLAN_ID", help="apply the exact previously reviewed dry-run plan")
+    vault_check = subparsers.add_parser("vault-check", help="validate a project note and linked checklist without changing anything")
+    vault_check.add_argument("note", type=Path)
+    vault_check.add_argument("--vault-root", type=Path, help="vault root for Obsidian vault-relative links")
     args = parser.parse_args()
+
+    if args.command == "vault-check":
+        from .ideas_contract import git_blob_hash, validate_spec
+        from .vault import read_note
+        from .vault_project import VaultError, compile_project
+
+        try:
+            note = read_note(args.note.absolute())
+            if note is None:
+                raise VaultError("main note needs symphony: idea, github, or paused in YAML")
+            repository = note.repository or "preview/project"
+            snapshot = compile_project(note, repository, (args.vault_root or note.path.parent).absolute())
+            snapshot.verify()
+            validate_spec(snapshot.spec, repository)
+            print("Project input is valid (read-only; no repository creation or agent execution).")
+            print(f"mode: {note.mode}; repository: {note.repository or 'created automatically on intake'}")
+            print(f"spec: {git_blob_hash(snapshot.spec)}; checklist files: {len(snapshot.files)}")
+            for item in snapshot.files:
+                print(f"[{'x' if item.checked else ' '}] {item.key}")
+        except (ValueError, OSError) as exc:
+            print(f"project input error: {exc}", file=sys.stderr)
+            raise SystemExit(2) from None
+        raise SystemExit(0)
 
     if args.command == "auth":
         raise SystemExit(_authenticate_provider(args.provider))
@@ -224,6 +333,12 @@ def main() -> None:
             raise SystemExit(1)
         command = [str(installer), "--update"] if os.geteuid() == 0 else ["sudo", str(installer), "--update"]
         raise SystemExit(_run_interactive(command))
+    if args.command == "graduate":
+        try:
+            raise SystemExit(_graduate(args.config, args.repository, args.approve))
+        except Exception as exc:
+            print(f"graduation error: {exc}", file=sys.stderr)
+            raise SystemExit(2) from None
 
     try:
         config, store, coordinator = build_coordinator(args.config)
@@ -260,8 +375,11 @@ def main() -> None:
         print(f"ideas={len(projects)}")
         for project in projects:
             print(_idea_status_line(project, latest[project.repository], config.service.report_dir))
+        for project in store.vault_projects():
+            print(f"vault={project['repository']} mode={project['mode']} desired={project['desired_mode']} status={project['status']} note={project['note_path']}")
         raise SystemExit(0)
     if args.command == "reconcile":
+        coordinator.refresh_vault()
         for repository, issue_number, result in coordinator.reconcile():
             item = f"{repository}#{issue_number}" if issue_number else repository
             print(f"{item}: {result}")

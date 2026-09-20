@@ -39,6 +39,10 @@ class AppPaths:
         return self.data_dir / "clones"
 
     @property
+    def retired_clones_dir(self) -> Path:
+        return self.data_dir / "retired-clones"
+
+    @property
     def locks_dir(self) -> Path:
         return self.data_dir / "locks"
 
@@ -57,11 +61,22 @@ class AppPaths:
     def clone_for(self, repository: str) -> Path:
         return self.clones_dir / repository_slug(repository)
 
+    def retired_clone_for(self, repository: str) -> Path:
+        return self.retired_clones_dir / repository_slug(repository)
+
     def lock_for(self, repository: str) -> Path:
         return self.locks_dir / f"{repository_slug(repository)}.lock"
 
     def required_directories(self) -> tuple[Path, ...]:
-        return (self.data_dir, self.clones_dir, self.locks_dir, self.log_file.parent, self.launchd_dir, self.temp_dir)
+        return (
+            self.data_dir,
+            self.clones_dir,
+            self.retired_clones_dir,
+            self.locks_dir,
+            self.log_file.parent,
+            self.launchd_dir,
+            self.temp_dir,
+        )
 
 
 def ensure_within(root: Path, target: Path) -> None:

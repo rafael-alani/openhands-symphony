@@ -111,6 +111,63 @@ def test_duplicate_idea_spec_hash_coalesces_to_one_run(tmp_path):
     assert len(store.list_idea_runs()) == 1
 
 
+def test_returning_to_an_older_spec_creates_one_new_run_and_retains_history(tmp_path):
+    store = Store(tmp_path / "state.db")
+    first, _, _ = store.ensure_idea_run(_idea_snapshot(), "codex")
+    claimed = store.claim_next_idea("worker", 60, 2, {"codex": 2})
+    store.transition_idea_run(claimed.id, IdeaRunState.PUBLISHED, published_commit="first")
+    second, _, _ = store.ensure_idea_run(_idea_snapshot("spec-two"), "codex")
+    restored, created, superseded = store.ensure_idea_run(_idea_snapshot(), "codex")
+    assert created and restored.id != first.id
+    assert [run.id for run in superseded] == [second.id]
+    assert store.get_idea_run_by_id(first.id).published_commit == "first"
+    assert store.get_idea_run("solo/idea", "spec-one").id == restored.id
+    assert store.last_completed_idea_run("solo/idea").id == first.id
+    duplicate, created, _ = store.ensure_idea_run(_idea_snapshot(), "codex")
+    assert not created and duplicate.id == restored.id
+    claimed = store.claim_next_idea("worker", 60, 2, {"codex": 2})
+    assert claimed.id == restored.id
+    store.transition_idea_run(claimed.id, IdeaRunState.PUBLISHED, published_commit="restored")
+    assert store.last_completed_idea_run("solo/idea").id == restored.id
+
+
+def test_schema7_upgrade_preserves_runs_events_validations_and_active_leases(tmp_path):
+    import re
+
+    from symphony.models import ValidationResult
+
+    store = Store(tmp_path / "state.db")
+    run, _, _ = store.ensure_idea_run(_idea_snapshot(), "codex")
+    claimed = store.claim_next_idea("worker", 60, 2, {"codex": 2})
+    store.record_idea_validation(run.id, claimed.attempt, ValidationResult(("true",), 0, "start", "end", "ok"))
+    with store.connect() as connection:
+        definition = connection.execute("SELECT sql FROM sqlite_master WHERE name='idea_runs'").fetchone()[0]
+        indexes = [row[0] for row in connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='idea_runs' AND sql IS NOT NULL"
+        )]
+        legacy = re.sub(r"\)\s*$", ", UNIQUE(repository, spec_hash))", definition)
+        legacy = legacy.replace("CREATE TABLE idea_runs", "CREATE TABLE legacy_runs", 1)
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute(legacy)
+        connection.execute("INSERT INTO legacy_runs SELECT * FROM idea_runs")
+        connection.execute("DROP TABLE idea_runs")
+        connection.execute("ALTER TABLE legacy_runs RENAME TO idea_runs")
+        for statement in indexes:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version=7")
+        events = connection.execute("SELECT count(*) FROM idea_run_events").fetchone()[0]
+    upgraded = Store(store.path)
+    assert upgraded.get_idea_run_by_id(run.id).state == IdeaRunState.RUNNING
+    assert upgraded.repository_has_lease("solo/idea")
+    assert upgraded.idea_validations(run.id)[0]["output"] == "ok"
+    with upgraded.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM idea_run_events").fetchone()[0] == events
+        assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+    upgraded.ensure_idea_run(_idea_snapshot("spec-two"), "codex")
+    restored, created, _ = upgraded.ensure_idea_run(_idea_snapshot(), "codex")
+    assert created and restored.id != run.id
+
+
 def test_published_idea_waits_for_preview_health_before_advancing_last_good(tmp_path):
     store = Store(tmp_path / "state.db")
     store.ensure_idea_run(_idea_snapshot(), "codex")

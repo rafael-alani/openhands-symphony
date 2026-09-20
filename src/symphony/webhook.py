@@ -102,6 +102,8 @@ def create_app(
                 return {"accepted": True, "ineligible": str(exc)}
         if not repository or not issue_number:
             return {"accepted": True, "ignored": "event has no issue"}
+        if repository not in coordinator.config.github.allowed_repositories or not store.vault_allows(repository, "github"):
+            return {"accepted": True, "ignored": "GitHub issue intake is inactive for this repository"}
 
         if x_github_event == "issues":
             action = str(payload.get("action") or "")

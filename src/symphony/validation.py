@@ -30,9 +30,18 @@ def validation_environment() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key not in SENSITIVE_ENV}
 
 
-def validation_argv(command: tuple[str, ...], run_as_user: str) -> list[str]:
+def validation_argv(
+    command: tuple[str, ...],
+    run_as_user: str,
+    extra_environment: dict[str, str] | None = None,
+) -> list[str]:
     if not run_as_user:
         return list(command)
+    environment = []
+    for key, value in (extra_environment or {}).items():
+        if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", key) or "\0" in value:
+            raise ValueError("validation environment contains an unsafe assignment")
+        environment.append(f"{key}={value}")
     return [
         "sudo",
         "-n",
@@ -45,6 +54,7 @@ def validation_argv(command: tuple[str, ...], run_as_user: str) -> list[str]:
         f"HOME=/var/lib/{run_as_user}",
         "PATH=/opt/browser-use/bin:/usr/local/bin:/usr/bin:/bin",
         "CI=true",
+        *environment,
         "/bin/sh",
         "-c",
         'umask 0007; exec "$@"',

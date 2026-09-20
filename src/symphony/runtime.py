@@ -40,6 +40,7 @@ def build_providers(config: Config) -> dict[str, ProviderAdapter]:
             provider_config.auth_command,
             api_key_file=config.service.agent_server_api_key_file,
             auth_marker_file=provider_config.auth_marker_file,
+            permission_mode=provider_config.permission_mode,
         )
     return providers
 
@@ -64,4 +65,10 @@ def build_coordinator(config_path: str | Path | None = None) -> tuple[Config, St
         providers,
         provider_slots,
     )
-    return config, store, coordinator
+    if config.vault.enabled:
+        from .vault import VaultBridge
+
+        coordinator.vault = VaultBridge(config, store)
+        coordinator.apply_vault_config()
+        coordinator.ideas.vault = coordinator.vault
+    return coordinator.config, store, coordinator

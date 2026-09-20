@@ -106,7 +106,7 @@ def test_browser_crashpad_state_stays_in_the_writable_private_browser_home() -> 
     assert "--disable-breakpad" in launcher
 
 
-def test_preview_service_is_credential_free_loopback_only_and_resource_bounded() -> None:
+def test_preview_service_allows_dependency_downloads_without_credentials() -> None:
     installer = INSTALLER.read_text()
     unit = PREVIEW_UNIT.read_text()
 
@@ -114,8 +114,8 @@ def test_preview_service_is_credential_free_loopback_only_and_resource_bounded()
     assert 'PREVIEW_STATE_DIR="/var/lib/openhands-preview"' in installer
     assert "User=openhands-preview" in unit
     assert "Group=openhands-preview" in unit
-    assert "IPAddressDeny=any" in unit
-    assert "IPAddressAllow=localhost" in unit
+    assert "IPAddressDeny=any" not in unit
+    assert "HOST=127.0.0.1" in unit
     assert "ReadWritePaths=/var/lib/openhands-preview" in unit
     assert "MemoryMax=" in unit
     assert "CPUQuota=" in unit

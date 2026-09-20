@@ -27,6 +27,19 @@ private_only = true
 spec_path = "idea/SPEC.md"
 progress_path = "idea/PROGRESS.md"
 
+# For the Syncthing note workflow, set github.allowed_repositories = [], remove
+# the CHANGE_ME repository section, then enable this block and set your owner.
+[vault]
+enabled = false
+path = "/obsidian"
+manage_checkboxes = true
+projects_dir = "1. Projects & Tasks"
+owner = ""
+provider = "codex"
+quiet_seconds = 30
+port_start = 10000
+port_end = 10999
+
 [scheduler]
 poll_seconds = 30
 reconcile_seconds = 300
@@ -48,6 +61,7 @@ antigravity = 1
 [providers.claude]
 enabled = true
 adapter = "openhands-acp"
+permission_mode = "full"
 acp_command = ["/opt/openhands-symphony/scripts/claude_acp_wrapper.sh"]
 auth_command = ["/opt/provider-clis/node_modules/.bin/claude", "auth", "status"]
 auth_marker_file = "/var/lib/openhands-auth-status/claude.json"
@@ -57,6 +71,7 @@ manual_command = ["/opt/provider-clis/node_modules/.bin/claude"]
 [providers.codex]
 enabled = true
 adapter = "openhands-acp"
+permission_mode = "full"
 acp_command = ["/opt/openhands-symphony/scripts/codex_acp_wrapper.sh"]
 auth_command = ["/opt/provider-clis/node_modules/.bin/codex", "login", "status"]
 auth_marker_file = "/var/lib/openhands-auth-status/codex.json"
@@ -64,6 +79,7 @@ timeout_seconds = 7200
 manual_command = ["/opt/provider-clis/node_modules/.bin/codex"]
 
 [providers.antigravity]
+permission_mode = "restricted"
 # The official headless interface and bridge are implemented, but autonomous
 # use stays disabled until this VM passes the subscription-backed smoke test.
 enabled = false

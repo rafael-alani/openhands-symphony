@@ -18,7 +18,15 @@ reconciliation ─┘                                      │
                                           optional fresh review process
 ```
 
-GitHub remains the specification, routing surface, and result surface. SQLite is operational state, not a replacement source of truth. Human-readable Markdown and JSON reports live separately under the report directory.
+GitHub supplies the specification, routing, and results in issue mode. In note mode, a normal Markdown file in the Syncthing vault supplies the specification and a reversible workflow selector; the vault bridge provisions its private repository and returns progress to the vault. SQLite is operational state, not a replacement source of truth. Human-readable Markdown and JSON reports live separately under the report directory.
+
+A project folder note may include a checkbox list or table linking subfiles.
+The compiler includes only those explicit files, excludes the generated Waypoint
+index, normalizes checkbox status characters, and checks every input again
+before publication. SQLite tracks each checklist file's content version and
+completion commit; the wrapper updates only its checkbox character after a
+successful run or source change. This prevents generated status from creating
+an intake loop. Main-note prose and subfile prose remain user-owned.
 
 Agent Canvas supplies the UI, conversation persistence, Agent Profiles, and Agent Server. Symphony uses the versioned Agent Server REST API through `OpenHandsACPProvider`; it does not fork Canvas or modify OpenHands internals.
 
@@ -44,13 +52,20 @@ After a crash between push and PR creation, an existing remote branch is accepte
 
 `deliveries.delivery_id` deduplicates webhook retries. `jobs` has a unique `(repository, issue_number)` key. The canonical comment is discovered through `<!-- openhands-symphony-status -->` only when the authenticated bot owns it, so losing its local ID does not append a new comment or adopt an attacker-controlled marker. Branch and PR lookup makes restarts artifact-aware.
 
+Ideas observations of the same current specification coalesce transactionally.
+Restoring a previously seen specification after an intervening change creates
+a fresh run against current code, retaining earlier run evidence. Schema 8
+removes the former global `(repository, spec_hash)` uniqueness constraint while
+preserving runs, events, validation results, and repository leases. Preserve a
+consistent pre-update SQLite copy when deploying across this schema boundary.
+
 The event path handles exact issues with low latency. The scheduler also searches each allowlisted repository for open `agent:ready` issues. A persistent systemd timer provides a second reconciliation trigger when the long-running service was offline.
 
 ## Persistent ideas previews
 
 After an ideas run passes its in-worktree boot gate and the guarded commit reaches the default branch, Symphony creates an immutable `git archive` of that exact commit. A narrow filesystem queue hands the archive to the separate `openhands-preview` service; the preview account cannot read GitHub, provider, Canvas, validator, or orchestrator state.
 
-The manager extracts each commit into a stable per-repository release directory, runs the configured setup script without credentials, starts the `.symphony/idea.toml` argv on its declared loopback port, and advances `last_good_preview_commit` only after health succeeds. A failed candidate is stopped and the prior healthy release is restarted. Service restart restores every durable last-good release, while obsolete releases are bounded and cleaned. Symphony also publishes the current ideas allowlist into the handoff; removing a repository stops its preview before later cleanup or graduation. systemd limits the preview cgroup's network access to localhost and applies CPU, memory, task, process, file-descriptor, capability, and filesystem bounds.
+The manager extracts each commit into a stable per-repository release directory, runs the configured setup script without credentials, and advances `last_good_preview_commit` only after health succeeds. While a last-good release is active, the candidate first runs on a temporary loopback port (through the `{port}` argv placeholder or `PORT` environment variable); a failed candidate is stopped without interrupting the active process. A healthy candidate is then cut over to the repository's immutable declared port. Service restart restores every durable last-good release, while obsolete releases, archives, and logs are bounded on success and failure paths. Symphony publishes the current ideas allowlist into the handoff; a missing or malformed allowlist fails closed, and removing a repository stops its preview before later cleanup or graduation. Preview setup has outbound network access for dependency installation; app commands bind localhost. systemd applies CPU, memory, task, process, file-descriptor, capability, and filesystem bounds.
 
 ## Concurrency and fairness
 

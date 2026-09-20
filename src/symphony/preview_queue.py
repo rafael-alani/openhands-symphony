@@ -168,7 +168,7 @@ class PreviewQueue:
             raise WorkspaceError("preview deployment requires a full published commit hash")
         validate_repository_name(run.repository)
         known_status = self.status(run.repository)
-        if known_status and known_status.desired_commit == commit:
+        if known_status and known_status.desired_commit == commit and known_status.state != "stopped":
             return False
         queued = self.queued_request(run.repository)
         if queued and queued.commit == commit:

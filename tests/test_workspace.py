@@ -103,6 +103,17 @@ def test_validation_uses_clean_lower_authority_process_boundary():
     assert argv[-7:-3] == ["/bin/sh", "-c", 'umask 0007; exec "$@"', "symphony-validation"]
 
 
+def test_validation_passes_explicit_safe_preview_environment():
+    argv = validation_argv(
+        ("python3", "-m", "app"),
+        "openhands-validator",
+        {"HOST": "127.0.0.1", "PORT": "4317"},
+    )
+
+    assert "HOST=127.0.0.1" in argv
+    assert "PORT=4317" in argv
+
+
 def test_empty_setup_script_is_disabled(tmp_path):
     manager = WorkspaceManager(tmp_path)
 

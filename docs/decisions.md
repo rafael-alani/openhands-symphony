@@ -38,7 +38,7 @@ Claude and Codex are wired to reuse worker-owned subscription login through ACP.
 
 ## Unattended does not mean full access
 
-OpenHands 1.35.0 auto-approves ACP permission requests, but its built-in provider defaults select Claude `bypassPermissions` and Codex `agent-full-access`. Symphony explicitly selects Claude `acceptEdits` and Codex `agent`; Codex therefore remains under its workspace-write, network-disabled sandbox. Agent Canvas itself runs as the credential-only worker account with a strict systemd filesystem boundary and cannot read the orchestrator's GitHub credentials.
+OpenHands 1.35.0 auto-approves ACP permission requests, but its built-in provider defaults select Claude `bypassPermissions` and Codex `agent-full-access`. At the operator's request, Symphony now defaults implementations to Claude `bypassPermissions` and Codex `agent-full-access`. `permission_mode = "restricted"` restores the former Claude `acceptEdits` / Codex `agent` choice. Agent Canvas itself runs as the credential-only worker account with a strict systemd filesystem boundary and cannot read the orchestrator's GitHub credentials.
 
 Independent reviewers receive a fresh conversation in a provider-enforced non-mutating mode: Claude and Antigravity `plan`, or Codex `read-only`. The review prompt also forbids edits and GitHub actions. Repair passes are separate implementation-mode processes and remain bounded.
 

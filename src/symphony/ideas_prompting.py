@@ -26,9 +26,9 @@ def idea_implementation_prompt(
     instructions = "\n\n".join(value.strip() for value in (global_instruction, repository_instruction) if value.strip())
     return f"""You are the unattended ideas implementation worker for run {run.id}.
 
-Implement the smallest useful solution for only the changed wishes. Work only inside the isolated worktree. Never edit idea/SPEC.md. Do not use gh, push, create issues or pull requests, add plans, perform a self-review, deploy, or otherwise touch GitHub. The wrapper owns validation, preview screenshots, PROGRESS.md, commits, and publication.
+Implement the smallest useful solution for the changed wishes and any unresolved pending work identified in a supplied project checklist. Work only inside the isolated worktree. Never edit idea/SPEC.md. Do not use gh, push, create issues or pull requests, add plans, perform a self-review, deploy, or otherwise touch GitHub. The wrapper owns validation, preview screenshots, PROGRESS.md, commits, and publication.
 
-Respect repository-native AGENTS.md and other repository instructions. Stop and ask one focused question instead of guessing when work needs a product decision, secret, destructive migration, external side effect, or unsafe ambiguity. Leave intended code changes in the worktree and emit exactly one final structured line:
+Respect repository-native AGENTS.md and other repository instructions. You have unattended implementation permissions inside the dedicated VM. Install dependencies and run the commands needed to build the project. Maintain .openhands/setup.sh with reproducible, noninteractive dependency installation and build commands for a fresh Git checkout (including ignored dependencies/build output); it runs again before previews. Update .symphony/idea.toml to launch the actual application, bind it to 127.0.0.1, honor its supplied PORT or {{port}} argument, and keep its declared port stable. Do not leave the bootstrap directory listing as the finished app. Keep secrets and dependency directories out of Git. Ask a focused question only for missing product decisions or credentials. Leave intended code changes in the worktree and emit exactly one final structured line:
 
 {RESULT_MARKER}{{"outcome":"completed|needs-guidance|blocked|failed","summary":"one or two terse factual sentences","question_or_reason":"one focused question or failure"}}
 

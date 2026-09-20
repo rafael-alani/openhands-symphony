@@ -1,7 +1,7 @@
 provider = "codex"
 
 [preview]
-start = ["uv", "run", "python", "-m", "pantry_pilot", "--host", "127.0.0.1", "--port", "4317"]
+start = ["uv", "run", "python", "-m", "pantry_pilot", "--host", "127.0.0.1", "--port", "{port}"]
 port = 4317
 health_path = "/health"
 startup_timeout_seconds = 20

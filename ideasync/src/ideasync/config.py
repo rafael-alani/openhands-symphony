@@ -17,12 +17,14 @@ class RepositoryConfig:
     name: str
     remote: str
     branch: str
+    preview_port: int | None = None
 
 
 @dataclass(frozen=True)
 class AppConfig:
     vault: Path
     quiet_period_seconds: float = 30.0
+    preview_host: str | None = None
     repositories: tuple[RepositoryConfig, ...] = ()
     version: int = 1
 
@@ -35,6 +37,15 @@ class AppConfig:
             raise ConfigError(f"repository is already configured: {repository.name}")
         repositories = tuple(sorted((*self.repositories, repository), key=lambda item: item.name.casefold()))
         return replace(self, repositories=repositories)
+
+    def without_repository(self, name: str) -> AppConfig:
+        if self.repository(name) is None:
+            raise ConfigError(f"repository is not configured: {name}")
+        folded = name.casefold()
+        return replace(
+            self,
+            repositories=tuple(repository for repository in self.repositories if repository.name.casefold() != folded),
+        )
 
 
 def _expect_keys(raw: dict[str, object], allowed: set[str], context: str) -> None:
@@ -50,10 +61,11 @@ def load_config(paths: AppPaths) -> AppConfig:
         raw = tomllib.loads(paths.config_file.read_text(encoding="utf-8", errors="strict"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"invalid config {paths.config_file}: {exc}") from exc
-    _expect_keys(raw, {"version", "vault", "quiet_period_seconds", "repositories"}, "config")
+    _expect_keys(raw, {"version", "vault", "quiet_period_seconds", "preview_host", "repositories"}, "config")
     version = raw.get("version")
     vault = raw.get("vault")
     quiet = raw.get("quiet_period_seconds", 30)
+    preview_host = raw.get("preview_host")
     repositories_raw = raw.get("repositories", [])
     if version != 1:
         raise ConfigError(f"unsupported config version: {version!r}")
@@ -66,6 +78,13 @@ def load_config(paths: AppPaths) -> AppConfig:
         or quiet < 0
     ):
         raise ConfigError("quiet_period_seconds must be a finite, non-negative number")
+    if preview_host is not None and (
+        not isinstance(preview_host, str)
+        or not preview_host
+        or preview_host.startswith("-")
+        or any(character.isspace() for character in preview_host)
+    ):
+        raise ConfigError("preview_host must be one non-option SSH destination")
     if not isinstance(repositories_raw, list):
         raise ConfigError("repositories must be an array of tables")
     repositories: list[RepositoryConfig] = []
@@ -73,10 +92,11 @@ def load_config(paths: AppPaths) -> AppConfig:
     for index, entry in enumerate(repositories_raw):
         if not isinstance(entry, dict):
             raise ConfigError(f"repositories[{index}] must be a table")
-        _expect_keys(entry, {"name", "remote", "branch"}, f"repositories[{index}]")
+        _expect_keys(entry, {"name", "remote", "branch", "preview_port"}, f"repositories[{index}]")
         name = entry.get("name")
         remote = entry.get("remote")
         branch = entry.get("branch")
+        preview_port = entry.get("preview_port")
         if not isinstance(name, str) or not isinstance(remote, str) or not remote or not isinstance(branch, str) or not branch:
             raise ConfigError(f"repositories[{index}] requires non-empty name, remote, and branch strings")
         try:
@@ -85,11 +105,18 @@ def load_config(paths: AppPaths) -> AppConfig:
             raise ConfigError(str(exc)) from exc
         if name.casefold() in names:
             raise ConfigError(f"duplicate repository in config: {name}")
+        if preview_port is not None and (
+            isinstance(preview_port, bool) or not isinstance(preview_port, int) or not 1 <= preview_port <= 65535
+        ):
+            raise ConfigError(f"repositories[{index}].preview_port must be an integer from 1 through 65535")
         names.add(name.casefold())
-        repositories.append(RepositoryConfig(name=name, remote=remote, branch=branch))
+        repositories.append(
+            RepositoryConfig(name=name, remote=remote, branch=branch, preview_port=preview_port)
+        )
     return AppConfig(
         vault=Path(vault),
         quiet_period_seconds=float(quiet),
+        preview_host=preview_host,
         repositories=tuple(repositories),
         version=1,
     )
@@ -101,6 +128,8 @@ def render_config(config: AppConfig) -> bytes:
         f"vault = {json.dumps(str(config.vault))}",
         f"quiet_period_seconds = {config.quiet_period_seconds:g}",
     ]
+    if config.preview_host is not None:
+        lines.append(f"preview_host = {json.dumps(config.preview_host)}")
     for repository in config.repositories:
         lines.extend(
             [
@@ -111,6 +140,8 @@ def render_config(config: AppConfig) -> bytes:
                 f"branch = {json.dumps(repository.branch)}",
             ]
         )
+        if repository.preview_port is not None:
+            lines.append(f"preview_port = {repository.preview_port}")
     return ("\n".join(lines) + "\n").encode()
 
 

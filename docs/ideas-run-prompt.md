@@ -28,9 +28,9 @@ Implement
 
 Preview and screenshots — mandatory publication gate
 
-9. Launch the preview using the exact `preview.start` argument array, without shell interpretation. Use the declared port and only loopback access. Poll `http://127.0.0.1:<port><health_path>` until it succeeds or `startup_timeout_seconds` expires. Capture logs without putting secrets in the repository.
+9. Choose a free temporary loopback port for this pre-publication candidate. Launch the preview using the `preview.start` argument array, without shell interpretation, replacing an exact `{port}` placeholder with that effective port when present. Also supply `HOST=127.0.0.1` and `PORT=<effective-port>`. Poll `http://127.0.0.1:<effective-port><health_path>` until it succeeds or `startup_timeout_seconds` expires, and capture screenshots from that same effective port. Capture logs without putting secrets in the repository. The declared stable port remains unchanged and becomes immutable after the project's first healthy release.
 10. If the process exits early, health never succeeds, or the contract is not truthful, do not commit this run. Report the command, exit/health evidence, and the focused correction needed. Never substitute a guessed start command.
-11. Once healthy, exercise each affected wish in a real browser at `http://127.0.0.1:<port>/`. Capture one PNG per affected `##` section, at no more than about 1280 px wide. Store it at a stable, descriptive slug such as `idea/assets/suggest-dinner.png`, overwriting that feature's previous image. Do not accumulate timestamped screenshots. Use relative links from `PROGRESS.md`.
+11. Once healthy, exercise each affected wish in a real browser at `http://127.0.0.1:<effective-port>/`. Capture one PNG per affected `##` section, at no more than about 1280 px wide. Store it at a stable, descriptive slug such as `idea/assets/suggest-dinner.png`, overwriting that feature's previous image. Do not accumulate timestamped screenshots. Use relative links from `PROGRESS.md`.
 
 Regenerate the mirror
 

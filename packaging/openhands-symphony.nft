@@ -2,5 +2,7 @@ table inet openhands_symphony {
     chain input {
         type filter hook input priority filter; policy accept;
         iifname != "lo" tcp dport { 8000, 8787, 9222 } drop
+        # Default note-project preview allocation; access through SSH.
+        iifname != "lo" tcp dport 10000-10999 drop
     }
 }

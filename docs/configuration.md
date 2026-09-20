@@ -18,7 +18,7 @@ The default path is `/etc/openhands-symphony/config.toml`; override it with `SYM
 
 ## `[github]`
 
-- `allowed_repositories`: required exact `owner/repository` list.
+- `allowed_repositories`: exact `owner/repository` list; may be empty when vault intake is enabled.
 - `private_only`: defaults true.
 - `auth_mode`: `gh` in this release; future GitHub App adapter slot.
 - `generated_pr_label`: label applied to created PRs.
@@ -31,9 +31,67 @@ The default path is `/etc/openhands-symphony/config.toml`; override it with `SYM
 - `spec_path`: user-owned spec path, default `idea/SPEC.md`.
 - `progress_path`: agent-owned progress path, default `idea/PROGRESS.md`.
 
-The ideas and Tier 1 allowlists must be disjoint. Only repositories in `[ideas].repositories` may receive direct default-branch publications; Tier 1 continues to publish generated branches and draft PRs. Both tiers share the scheduler's global and per-provider concurrency limits and repository leases.
+The ideas and Tier 1 allowlists must be disjoint. Only repositories in the effective Ideas allowlist (static configuration plus notes currently in Ideas mode) may receive direct default-branch publications; Tier 1 continues to publish generated branches and draft PRs. Both tiers share the scheduler's global and per-provider concurrency limits and repository leases.
 
-Every successful ideas publication is archived from the exact pushed commit and handed to the credential-free preview service. The service reads `.symphony/idea.toml`, optionally runs the repository's configured `setup_script`, starts the app on its declared loopback port, and advances `last_good_preview_commit` only after health succeeds. Preview ports must therefore be unique across active ideas repositories.
+Every successful ideas publication is archived from the exact pushed commit and handed to the credential-free preview service. The service reads `.symphony/idea.toml`, optionally runs the repository's configured `setup_script`, starts the app on its declared loopback port, and advances `last_good_preview_commit` only after health succeeds. Preview ports must therefore be unique across active ideas repositories and cannot change after the first healthy release. Preview commands should use an exact `{port}` argv placeholder or honor the supplied `HOST=127.0.0.1` and `PORT` environment variables; this lets the manager probe a candidate without stopping the last-good process.
+
+## `[vault]`
+
+- `enabled`: enable direct Syncthing note intake; false by default for existing installations.
+- `path`: VM-local synced vault root, `/obsidian` by default.
+- `manage_checkboxes`: default `true`; tick successful checklist files and reopen them on content changes. Set `false` to retain manual checkbox editing.
+- `projects_dir`: relative note subtree, `1. Projects & Tasks` by default.
+- `owner`: GitHub account/organization permitted for automatic private repositories.
+- `provider`: enabled implementation provider used to bootstrap new project contracts.
+- `quiet_seconds`: debounce after the latest main-note or listed-subfile write (default 30).
+- `port_start`, `port_end`: dedicated stable preview port allocation range (10000–10999).
+
+Each marked note authorizes its repository, so no per-project static allowlist
+entry is needed. SQLite retains the note identity, effective/requested mode,
+and preview port. Modes switch only after repository leases drain. Claims
+check this durable routing state even if another service process has stale
+configuration. Source-note edits are checked again before an Ideas publication.
+See [the workflow guide](obsidian.md) for the YAML and Syncthing setup.
+
+### Graduating a legacy Ideas repository
+
+This archival operation is retained for old Git-spec installations. Note-managed projects switch reversibly through `symphony: github` and do not use graduation. Legacy graduation is deliberately two-step. First run the read-only preview as the
+Symphony account and inspect every proposed issue:
+
+```bash
+sudo -iu openhands-symphony agentctl graduate owner/repository
+```
+
+The output ends with an approval ID and the exact apply command. Run that
+command with `sudo` because applying graduation atomically replaces the
+root-owned configuration and briefly stops/restarts the Symphony target:
+
+```bash
+sudo agentctl graduate owner/repository --approve <plan-id>
+```
+
+The approval is rejected if the spec, default branch, or configuration changed
+since the preview. Apply creates idempotently marked, unrouted issues for only
+the unfinished current sections, archives the active Ideas contract under
+`archive/ideas/<spec-blob>/`, moves the repository between the disjoint
+allowlists, retires outstanding Ideas runs, and removes it from the live-preview
+allowlist. Add `agent:ready` and exactly one `agent:*` label only to the carried
+issues you approve for Tier 1 work. Graduation is globally serialized across
+repositories because every run edits the same configuration and service target.
+Reused marked issues are reopened, refreshed to the approved text, and stripped
+of intake labels. Before the archive commit advances the default branch, a
+failure to retire work, refresh preview authorization, or replace configuration
+aborts the operation and restores the prior local Ideas state.
+
+On the vault machine, the next scheduled `ideasync sync` recognizes the
+graduation archive and reports the repository as `retired` without recreating
+`idea/SPEC.md`. Deregister it explicitly after reviewing that state; the vault
+is preserved and the managed clone is moved to recoverable local storage:
+
+```bash
+ideasync remove owner/repository --dry-run
+ideasync remove owner/repository
+```
 
 ## `[scheduler]`
 
@@ -48,6 +106,7 @@ Polling/reconciliation intervals, lease/heartbeat durations, global concurrency,
 - `auth_marker_file`: non-secret marker written only after the official worker-side probe succeeds.
 - `timeout_seconds`
 - `manual_command`
+- `permission_mode`: `full` (default for Claude/Codex) or `restricted`; review sessions always select read-only/plan mode. Antigravity retains its restricted experimental adapter.
 
 Commands are arrays on purpose; shell strings are accepted by the parser for convenience but arrays are recommended.
 

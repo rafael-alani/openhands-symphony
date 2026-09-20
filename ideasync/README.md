@@ -1,4 +1,6 @@
-# ideasync
+# ideasync (legacy optional bridge)
+
+For the current normal-note/Syncthing workflow, use [direct vault intake](../docs/obsidian.md). Do not run ideasync for the same repositories: the VM reads notes directly and writes results into the synced vault. This package remains available for existing Git-transport installations.
 
 `ideasync` is the Mac-side bridge for ideas-tier repositories. It never operates on a development checkout. Each configured `owner/repo` gets a dedicated clone below the tool's data directory; Git is the only transport between that clone and the remote.
 
@@ -16,12 +18,15 @@ Python 3.12 or newer, `git`, and [uv](https://docs.astral.sh/uv/) are required.
 ```bash
 cd ideasync
 uv tool install .
-ideasync init --vault "$HOME/IdeasVault"
+ideasync init --vault "$HOME/IdeasVault" --preview-host your-ideas-vm
 ideasync add example-owner/pantry-pilot
 ideasync doctor
 ideasync sync --dry-run
 ideasync sync
 ideasync status
+# After Symphony graduates a repository:
+ideasync remove example-owner/pantry-pilot --dry-run
+ideasync remove example-owner/pantry-pilot
 ```
 
 The default tool data directory is `~/Library/Application Support/ideasync`. Override it with the global `--data-dir PATH` option or `IDEASYNC_DATA_DIR`. `init --quiet-period-seconds N` changes the default 30-second debounce. `add --remote URL owner/repo` supports a non-GitHub or local test remote while routing still uses the exact frontmatter `repo: owner/repo`.
@@ -30,18 +35,26 @@ The default tool data directory is `~/Library/Application Support/ideasync`. Ove
 
 Every non-dry sync writes `_ideasync/STATUS.md` in the vault and appends JSON Lines to `<data-dir>/logs/ideasync.jsonl`. Failures also request a macOS notification through `osascript`. Dry runs create no lock, fetch nothing, write no log/status, and change no file.
 
+When Symphony graduates a repository, the next sync recognizes the valid
+`archive/ideas/<spec-blob>/` contract and reports a healthy `retired` state. It
+never copies the still-authoritative vault `SPEC.md` back into the now-Tier-1
+repository. Run `ideasync remove owner/repo` afterward to remove the local
+registration. Removal is permitted only after fetching and verifying a valid
+graduation archive with no unpublished managed-clone commits; it preserves the
+vault and moves the clone under `<data-dir>/retired-clones/` for recovery.
+
 ## Schedule and live preview
 
 ```bash
 ideasync install-schedule --dry-run
 ideasync install-schedule
 ideasync uninstall-schedule
-ideasync open example-owner/pantry-pilot --host your-ideas-vm
+ideasync open example-owner/pantry-pilot
 ```
 
 The launchd implementation uses `StartInterval = 120`. Its plist stays below `<data-dir>/launchd/` and is bootstrapped into the current GUI domain, keeping all ideasync-owned files inside the data directory. Re-run `install-schedule` after a new login because no file is placed in `~/Library/LaunchAgents`. The scheduler is behind a small interface so a systemd user-timer implementation can be added later.
 
-`open` reads the repository's current preview port, establishes an `ExitOnForwardFailure` SSH tunnel bound only to local loopback, opens the browser, and keeps the tunnel attached to the terminal until Ctrl-C. Use `--local-port` when the declared port is already occupied, `--no-browser` when only the tunnel is wanted, or `--dry-run` to inspect the exact argv without connecting.
+`init --preview-host` stores the default SSH destination; `open --host` overrides it for one invocation. `add` pins the repository's declared preview port, `open` establishes an `ExitOnForwardFailure` SSH tunnel bound only to local loopback, opens the browser, and keeps the tunnel attached to the terminal until Ctrl-C. Pinning keeps a rolled-back release reachable and `doctor` reports later contract drift. Use `--local-port` when the pinned port is already occupied, `--no-browser` when only the tunnel is wanted, or `--dry-run` to inspect the exact argv without connecting.
 
 ## Development
 
@@ -71,7 +84,7 @@ git -C "$DEMO_ROOT/seed" remote add origin "$DEMO_ROOT/remote.git"
 git -C "$DEMO_ROOT/seed" push -u origin main
 
 uv run ideasync --data-dir "$DEMO_ROOT/data" init \
-  --vault "$DEMO_ROOT/vault" --quiet-period-seconds 0
+  --vault "$DEMO_ROOT/vault" --quiet-period-seconds 0 --preview-host your-ideas-vm
 uv run ideasync --data-dir "$DEMO_ROOT/data" add \
   example-owner/pantry-pilot --remote "$DEMO_ROOT/remote.git"
 

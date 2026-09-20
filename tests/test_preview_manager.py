@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import socket
 import subprocess
 from types import SimpleNamespace
 
@@ -31,6 +32,13 @@ class FakeProcess:
 
 
 class FakePreviewManager(PreviewManager):
+    next_probe_port = 25000
+
+    @classmethod
+    def _available_loopback_port(cls):
+        cls.next_probe_port += 1
+        return cls.next_probe_port
+
     def _start_release(self, repository, commit, release, runtime):
         process = FakeProcess()
         managed = ManagedPreview(repository, commit, release, runtime, process, io.BytesIO())
@@ -74,6 +82,12 @@ def _runtime(port: int) -> str:
     )
 
 
+def _available_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
 HEALTHY_APP = """
 import http.server
 import os
@@ -97,6 +111,7 @@ def test_preview_manager_keeps_last_good_release_when_candidate_fails(tmp_path):
 
     root = tmp_path / "preview"
     queue = PreviewQueue(root, workspace_root)
+    queue.publish_allowlist(("solo/idea",))
     first_run = SimpleNamespace(
         repository="solo/idea",
         published_commit=first_commit,
@@ -111,6 +126,7 @@ def test_preview_manager_keeps_last_good_release_when_candidate_fails(tmp_path):
         assert first is not None
         assert first.state == "healthy"
         assert first.active_commit == first.last_good_commit == first_commit
+        first_process = manager._active["solo/idea"].process
         current = manager._project_dir("solo/idea") / "current"
         assert current.is_symlink()
         assert current.resolve() == manager._release_dir("solo/idea", first_commit)
@@ -130,6 +146,7 @@ def test_preview_manager_keeps_last_good_release_when_candidate_fails(tmp_path):
         assert rolled_back.state == "rollback"
         assert rolled_back.desired_commit == failed_commit
         assert rolled_back.active_commit == rolled_back.last_good_commit == first_commit
+        assert manager._active["solo/idea"].process is first_process
         assert current.resolve() == manager._release_dir("solo/idea", first_commit)
     finally:
         manager.close()
@@ -158,6 +175,7 @@ def test_preview_manager_restarts_a_crashed_last_good_process(tmp_path):
 
     root = tmp_path / "preview"
     queue = PreviewQueue(root, workspace_root)
+    queue.publish_allowlist(("solo/idea",))
     queue.enqueue(SimpleNamespace(repository="solo/idea", published_commit=commit, worktree=str(repository)), "")
     manager = FakePreviewManager(root, poll_seconds=0.01)
     try:
@@ -194,6 +212,7 @@ def test_new_request_arriving_during_deploy_is_not_deleted(tmp_path):
 
     root = tmp_path / "preview"
     queue = PreviewQueue(root, workspace_root)
+    queue.publish_allowlist(("solo/idea",))
     queue.enqueue(
         SimpleNamespace(repository="solo/idea", published_commit=first_commit, worktree=str(repository)),
         "",
@@ -227,3 +246,189 @@ def test_new_request_arriving_during_deploy_is_not_deleted(tmp_path):
         assert status.active_commit == status.last_good_commit == second_commit
     finally:
         manager.close()
+
+
+def test_preview_manager_fails_closed_until_allowlist_is_valid(tmp_path):
+    workspace_root = tmp_path / "workspaces"
+    repository = workspace_root / "runs" / "published"
+    repository.mkdir(parents=True)
+    _run(["git", "init", "-b", "main"], repository)
+    (repository / ".symphony").mkdir()
+    (repository / ".symphony" / "idea.toml").write_text(_runtime(14320))
+    (repository / "app.py").write_text(HEALTHY_APP)
+    commit = _commit(repository, "healthy preview")
+
+    root = tmp_path / "preview"
+    queue = PreviewQueue(root, workspace_root)
+    run = SimpleNamespace(repository="solo/idea", published_commit=commit, worktree=str(repository))
+    assert queue.enqueue(run, "")
+    manager = FakePreviewManager(root, poll_seconds=0.01)
+    try:
+        manager.run_once()
+        stopped = queue.status("solo/idea")
+        assert stopped is not None and stopped.state == "stopped"
+        assert "solo/idea" not in manager._active
+
+        queue.publish_allowlist(("solo/idea",))
+        assert queue.enqueue(run, "")
+        manager.run_once()
+        assert queue.status("solo/idea").state == "healthy"
+
+        (root / "control" / "allowlist.json").write_text("not json")
+        manager.run_once()
+        assert queue.status("solo/idea").state == "stopped"
+        assert "solo/idea" not in manager._active
+    finally:
+        manager.close()
+
+
+def test_preview_manager_bounds_artifacts_after_preparation_failures(tmp_path):
+    workspace_root = tmp_path / "workspaces"
+    repository = workspace_root / "runs" / "published"
+    repository.mkdir(parents=True)
+    _run(["git", "init", "-b", "main"], repository)
+    (repository / ".symphony").mkdir()
+    (repository / "app.py").write_text(HEALTHY_APP)
+
+    root = tmp_path / "preview"
+    queue = PreviewQueue(root, workspace_root)
+    queue.publish_allowlist(("solo/idea",))
+    manager = FakePreviewManager(root, poll_seconds=0.01, releases_to_keep=2)
+    try:
+        for number in range(4):
+            (repository / ".symphony" / "idea.toml").write_text("invalid = [")
+            (repository / "version.txt").write_text(str(number))
+            commit = _commit(repository, f"invalid preview {number}")
+            run = SimpleNamespace(repository="solo/idea", published_commit=commit, worktree=str(repository))
+            assert queue.enqueue(run, "")
+            manager.run_once()
+
+        releases = manager._project_dir("solo/idea") / "releases"
+        archives = root / "archives" / next((root / "archives").iterdir()).name
+        assert len([path for path in releases.iterdir() if path.is_dir()]) == 2
+        assert len(list(archives.glob("*.tar"))) == 2
+    finally:
+        manager.close()
+
+
+def test_preview_manager_bounds_artifacts_after_successful_deployments(tmp_path):
+    workspace_root = tmp_path / "workspaces"
+    repository = workspace_root / "runs" / "published"
+    repository.mkdir(parents=True)
+    _run(["git", "init", "-b", "main"], repository)
+    (repository / ".symphony").mkdir()
+    runtime = _runtime(_available_loopback_port()).replace('health_path = "/health"', 'health_path = "/"')
+    (repository / ".symphony" / "idea.toml").write_text(runtime)
+    (repository / "app.py").write_text(HEALTHY_APP)
+
+    root = tmp_path / "preview"
+    queue = PreviewQueue(root, workspace_root)
+    queue.publish_allowlist(("solo/idea",))
+    manager = PreviewManager(root, poll_seconds=0.01, releases_to_keep=2)
+    try:
+        for number in range(4):
+            (repository / "version.txt").write_text(f"{number}\n")
+            commit = _commit(repository, f"healthy preview {number}")
+            run = SimpleNamespace(repository="solo/idea", published_commit=commit, worktree=str(repository))
+            assert queue.enqueue(run, "")
+            assert manager.run_once() == 1
+            assert queue.status("solo/idea").state == "healthy"
+
+        releases = manager._project_dir("solo/idea") / "releases"
+        archives = next((root / "archives").iterdir())
+        logs = manager._project_dir("solo/idea") / "logs"
+        assert len([path for path in releases.iterdir() if path.is_dir()]) == 2
+        assert len(list(archives.glob("*.tar"))) == 2
+        assert len(list(logs.glob("*.log"))) == 2
+    finally:
+        manager.close()
+
+
+def test_preview_manager_rejects_port_changes_after_first_healthy_release(tmp_path):
+    workspace_root = tmp_path / "workspaces"
+    repository = workspace_root / "runs" / "published"
+    repository.mkdir(parents=True)
+    _run(["git", "init", "-b", "main"], repository)
+    (repository / ".symphony").mkdir()
+    (repository / ".symphony" / "idea.toml").write_text(_runtime(14321))
+    (repository / "app.py").write_text(HEALTHY_APP)
+    first_commit = _commit(repository, "healthy preview")
+
+    root = tmp_path / "preview"
+    queue = PreviewQueue(root, workspace_root)
+    queue.publish_allowlist(("solo/idea",))
+    queue.enqueue(
+        SimpleNamespace(repository="solo/idea", published_commit=first_commit, worktree=str(repository)),
+        "",
+    )
+    manager = FakePreviewManager(root, poll_seconds=0.01)
+    try:
+        manager.run_once()
+        first_process = manager._active["solo/idea"].process
+
+        (repository / ".symphony" / "idea.toml").write_text(_runtime(15321))
+        second_commit = _commit(repository, "change preview port")
+        queue.enqueue(
+            SimpleNamespace(repository="solo/idea", published_commit=second_commit, worktree=str(repository)),
+            "",
+        )
+        manager.run_once()
+
+        status = queue.status("solo/idea")
+        assert status is not None and status.state == "rollback"
+        assert status.port == 14321
+        assert status.active_commit == status.last_good_commit == first_commit
+        assert "preview port is immutable" in status.detail
+        assert manager._active["solo/idea"].process is first_process
+    finally:
+        manager.close()
+
+
+def test_fresh_preview_downloads_and_builds_ignored_dependency(tmp_path):
+    import functools
+    import http.server
+    import threading
+
+    packages = tmp_path / "packages"
+    packages.mkdir()
+    (packages / "dependency.py").write_text("VALUE = 'downloaded dependency'\n")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(packages))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    workspace_root = tmp_path / "workspaces"
+    repository = workspace_root / "runs" / "published"
+    repository.mkdir(parents=True)
+    _run(["git", "init", "-b", "main"], repository)
+    (repository / ".symphony").mkdir()
+    (repository / ".openhands").mkdir()
+    (repository / ".symphony/idea.toml").write_text(
+        _runtime(_available_loopback_port()).replace('health_path = "/health"', 'health_path = "/"')
+    )
+    (repository / ".gitignore").write_text("dependency.py\nbuild.txt\n__pycache__/\n")
+    (repository / "app.py").write_text("from dependency import VALUE\nassert VALUE == 'downloaded dependency'\n" + HEALTHY_APP)
+    (repository / ".openhands/setup.sh").write_text(
+        "#!/bin/sh\nset -eu\npython3 - <<'BUILD'\n"
+        "from urllib.request import urlretrieve\nfrom pathlib import Path\n"
+        f"urlretrieve('http://127.0.0.1:{server.server_port}/dependency.py', 'dependency.py')\n"
+        "Path('build.txt').write_text('built')\nBUILD\n"
+    )
+    commit = _commit(repository, "app requiring a downloaded dependency")
+    root = tmp_path / "preview"
+    queue = PreviewQueue(root, workspace_root)
+    queue.publish_allowlist(("solo/idea",))
+    queue.enqueue(SimpleNamespace(repository="solo/idea", published_commit=commit, worktree=str(repository)),
+                  ".openhands/setup.sh")
+    manager = PreviewManager(root, poll_seconds=0.01)
+    try:
+        assert not (repository / "dependency.py").exists()
+        assert manager.run_once() == 1
+        assert queue.status("solo/idea").state == "healthy"
+        release = manager._release_dir("solo/idea", commit)
+        assert (release / "dependency.py").is_file()
+        assert (release / "build.txt").read_text() == "built"
+    finally:
+        manager.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

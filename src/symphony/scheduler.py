@@ -65,6 +65,10 @@ class Scheduler:
 
     def tick(self, *, reconcile: bool = False) -> int:
         self._clean_futures()
+        if self.coordinator.vault is not None:
+            self.coordinator.refresh_vault()
+            self.config = self.coordinator.config
+            reconcile = True
         now = time.monotonic()
         if reconcile or now - self._last_reconcile >= self.config.scheduler.reconcile_seconds:
             self.coordinator.reconcile()
@@ -87,6 +91,7 @@ class Scheduler:
                         self.config.scheduler.lease_seconds,
                         self.config.scheduler.global_concurrency,
                         self.config.scheduler.provider_concurrency,
+                        allowed_repositories=self.config.ideas.repositories,
                     )
                     is_idea = claimed is not None
                 elif kind == "issue":
@@ -95,6 +100,7 @@ class Scheduler:
                         self.config.scheduler.lease_seconds,
                         self.config.scheduler.global_concurrency,
                         self.config.scheduler.provider_concurrency,
+                        allowed_repositories=self.config.github.allowed_repositories,
                     )
                     is_idea = False
                 if claimed is not None:

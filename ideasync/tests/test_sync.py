@@ -4,7 +4,7 @@ import fcntl
 from collections.abc import Callable
 from pathlib import Path
 
-from conftest import PROGRESS, REPOSITORY, SPEC, Harness, clone_agent, commit_and_push, git
+from conftest import PROGRESS, REPOSITORY, SPEC, Harness, clone_agent, commit_and_push, git, graduate_remote
 
 
 def remote_file(harness: Harness, path: str) -> bytes:
@@ -51,6 +51,30 @@ def test_hash_based_noop_preserves_inbound_file(harness_factory: Callable[..., H
     assert result.code == 0
     assert "inbound unchanged" in result.stdout
     assert (after.st_ino, after.st_mtime_ns, after.st_size) == (before.st_ino, before.st_mtime_ns, before.st_size)
+
+
+def test_graduated_repository_becomes_a_clean_retired_sync_state(
+    harness_factory: Callable[..., Harness],
+) -> None:
+    harness = harness_factory()
+    vault_before = tree_contents(harness.vault_directory)
+    graduate_remote(harness)
+
+    first = harness.invoke("sync", REPOSITORY)
+    second = harness.invoke("sync", REPOSITORY)
+    doctor = harness.invoke("doctor")
+    opened = harness.invoke("open", REPOSITORY, "--dry-run")
+
+    assert first.code == second.code == doctor.code == 0
+    assert "retired" in first.stdout
+    assert "run `ideasync remove" in first.stdout
+    assert "retired" in second.stdout
+    assert "graduated at archive/ideas/accepted-spec" in doctor.stdout
+    assert opened.code == 1
+    assert "repository graduated" in opened.stderr
+    assert tree_contents(harness.vault_directory) == vault_before
+    assert git("--git-dir", str(harness.remote), "show", "main:idea/SPEC.md", check=False).returncode != 0
+    assert "Overall: **ok**" in (harness.vault / "_ideasync" / "STATUS.md").read_text(encoding="utf-8")
 
 
 def test_quiet_period_defers_outbound_spec(harness_factory: Callable[..., Harness]) -> None:

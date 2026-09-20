@@ -86,6 +86,12 @@ def parse_runtime(content: bytes) -> IdeaRuntime:
     return IdeaRuntime(provider, tuple(start), port, health_path, timeout)
 
 
+def preview_argv(runtime: IdeaRuntime) -> tuple[str, ...]:
+    """Render the declared preview argv for the runtime's effective port."""
+
+    return tuple(argument.replace("{port}", str(runtime.port)) for argument in runtime.start)
+
+
 def git_blob_hash(content: bytes) -> str:
     return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
 

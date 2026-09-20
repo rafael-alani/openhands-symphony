@@ -60,3 +60,30 @@ def test_duplicate_github_delivery_creates_one_job_and_one_status_comment(tmp_pa
     assert second.json()["duplicate"] is True
     assert len(store.list_jobs()) == 1
     assert github.comment_creates == 1
+
+
+def test_ideas_mode_ignores_issue_events_without_touching_github(tmp_path):
+    snapshot = issue()
+    config = make_config(tmp_path)
+    config.service.webhook_secret_file.write_text("test-secret\n")
+    store = Store(config.service.state_dir / "state.db")
+    store.register_vault_project(snapshot.repository, "/obsidian/project.md", managed=False, port_start=10000, port_end=10999)
+    store.request_vault_mode(snapshot.repository, "idea")
+    store.activate_vault_mode(snapshot.repository)
+    # No issue exists in the backend: a read would fail this request.
+    github = FakeGitHub([])
+    coordinator = Coordinator(config, store, github, {"codex": FakeProvider("codex")})
+    app = create_app(store, coordinator, DummyScheduler(), config.service.webhook_secret_file)
+    payload = json.dumps({"action": "labeled", "repository": {"full_name": snapshot.repository}, "issue": {"number": 1}}).encode()
+    signature = "sha256=" + hmac.new(b"test-secret", payload, hashlib.sha256).hexdigest()
+
+    async def deliver():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            return await client.post("/webhooks/github", content=payload, headers={
+                "X-GitHub-Event": "issues", "X-GitHub-Delivery": "ignored-delivery", "X-Hub-Signature-256": signature,
+            })
+
+    response = asyncio.run(deliver())
+    assert response.status_code == 200
+    assert "ignored" in response.json()
+    assert not store.list_jobs()

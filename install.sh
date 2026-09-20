@@ -258,6 +258,7 @@ fi
 for unit in "${INSTALL_DIR}"/systemd/*; do
   install -m 0644 "${unit}" "/etc/systemd/system/$(basename "${unit}")"
 done
+"/opt/openhands-symphony-tool/bin/python" "${INSTALL_DIR}/scripts/configure_vault.py" --config "${CONFIG_DIR}/config.toml"
 systemctl daemon-reload
 systemctl enable openhands-symphony.target
 if [[ "${STACK_WAS_ACTIVE}" == true ]]; then

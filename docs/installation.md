@@ -50,7 +50,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 
 `doctor` must be run after start because it checks the pinned Agent Server over the authenticated localhost API.
 
-The ideas preview manager starts with the stack as `openhands-preview`. It restores each last-good release from `/var/lib/openhands-preview`, accepts only immutable archives queued by Symphony after a guarded publication, and exposes each app only on the loopback port declared by that repository's `.symphony/idea.toml`.
+The ideas preview manager starts with the stack as `openhands-preview`. It restores each last-good release from `/var/lib/openhands-preview`, accepts only immutable archives queued by Symphony after a guarded publication, and exposes each app only on the stable loopback port declared by that repository's `.symphony/idea.toml`. A missing or malformed ideas allowlist fails closed.
 
 ### Clean-machine regression gate
 
@@ -97,3 +97,10 @@ ssh -L 8000:127.0.0.1:8000 -L 8787:127.0.0.1:8787 your-vm
 ```
 
 Open Canvas at `http://127.0.0.1:8000`. On first launch, choose Codex (recommended after its authentication check passes) or Claude Code as the default for manual conversations. The choice does not affect Symphony provider routing; see the [Canvas operator guide](canvas.md). A GitHub webhook cannot reach loopback directly; either expose only `/webhooks/github` through a narrow HTTPS ingress or rely on five-minute reconciliation. Tailscale requires an explicit interface-specific nftables exception because non-loopback access is blocked by default. Never expose all of Canvas.
+
+## Syncthing vault intake
+
+See [Obsidian setup](obsidian.md) to enable `[vault]` and sync the homelab vault
+to `/obsidian` inside this VM. The installer creates missing vault directories
+and a narrow systemd writable-path override when enabled; it does not change
+ownership of existing synced content or pair Syncthing devices.

@@ -37,6 +37,7 @@ class OpenHandsACPProvider(ProviderAdapter):
         request_timeout: float = 30,
         api_key_file: Path | None = None,
         auth_marker_file: Path | None = None,
+        permission_mode: str = "full",
     ):
         self.name = name
         self.agent_server_url = agent_server_url.rstrip("/")
@@ -45,6 +46,9 @@ class OpenHandsACPProvider(ProviderAdapter):
         self.request_timeout = request_timeout
         self.api_key_file = api_key_file
         self.auth_marker_file = auth_marker_file
+        if permission_mode not in {"full", "restricted"}:
+            raise ValueError("permission_mode must be full or restricted")
+        self.permission_mode = permission_mode
         self._last_quota = QuotaState()
 
     @property
@@ -145,13 +149,11 @@ class OpenHandsACPProvider(ProviderAdapter):
         if not self.acp_command:
             raise OpenHandsProviderError(f"{self.name} has no ACP command configured")
         server_kind = {"claude": "claude-code", "codex": "codex"}.get(self.name, "custom")
-        # OpenHands' built-in ACP defaults currently select bypassPermissions
-        # for Claude and danger-full-access for Codex. Symphony deliberately
-        # overrides both. The OpenHands ACP bridge auto-approves individual
-        # permission requests, so these modes remain unattended while Codex
-        # keeps its workspace-write sandbox and Claude avoids blanket bypass.
+        # The dedicated VM is the implementation boundary. Review stays read-only.
         if read_only:
             session_mode = {"claude": "plan", "codex": "read-only", "antigravity": "plan"}.get(self.name, "default")
+        elif self.permission_mode == "full":
+            session_mode = {"claude": "bypassPermissions", "codex": "agent-full-access"}.get(self.name, "default")
         else:
             session_mode = {"claude": "acceptEdits", "codex": "agent"}.get(self.name, "default")
         payload = {

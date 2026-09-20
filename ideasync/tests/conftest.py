@@ -43,7 +43,7 @@ First wish.
 IDEA_TOML = b"""provider = "codex"
 
 [preview]
-start = ["python", "-m", "http.server", "4317"]
+start = ["python", "-m", "http.server", "{port}"]
 port = 4317
 health_path = "/"
 startup_timeout_seconds = 10
@@ -101,6 +101,21 @@ def commit_and_push(repository: Path, message: str) -> None:
     git("push", "origin", "main", cwd=repository)
 
 
+def graduate_remote(harness: Harness) -> None:
+    agent = clone_agent(harness.remote, harness.root / "graduator")
+    archive = agent / "archive" / "ideas" / "accepted-spec"
+    (archive / "idea" / "assets").mkdir(parents=True)
+    (archive / ".symphony").mkdir(parents=True)
+    for source, destination in (
+        ("idea/SPEC.md", "archive/ideas/accepted-spec/idea/SPEC.md"),
+        ("idea/PROGRESS.md", "archive/ideas/accepted-spec/idea/PROGRESS.md"),
+        ("idea/assets/first-feature.png", "archive/ideas/accepted-spec/idea/assets/first-feature.png"),
+        (".symphony/idea.toml", "archive/ideas/accepted-spec/.symphony/idea.toml"),
+    ):
+        git("mv", source, destination, cwd=agent)
+    commit_and_push(agent, "graduate idea to Tier 1")
+
+
 @dataclass
 class Invocation:
     code: int
@@ -151,6 +166,8 @@ def harness_factory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Calla
             str(harness.vault),
             "--quiet-period-seconds",
             str(quiet_period),
+            "--preview-host",
+            "ideas-vm",
         )
         assert initialized.code == 0, initialized.stderr
         added = harness.invoke("add", REPOSITORY, "--remote", str(remote))

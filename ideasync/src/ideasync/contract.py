@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import tomllib
 from dataclasses import dataclass
@@ -28,7 +27,7 @@ class PreviewContract:
     start: tuple[str, ...]
     port: int
     health_path: str
-    startup_timeout_seconds: float
+    startup_timeout_seconds: int
 
 
 def validate_repository(value: str) -> str:
@@ -112,8 +111,8 @@ def read_preview_contract(path: Path) -> PreviewContract:
         raise ContractError(f"{path}: invalid TOML: {exc}") from exc
     provider = raw.get("provider")
     preview = raw.get("preview")
-    if not isinstance(provider, str) or not provider.strip():
-        raise ContractError(f"{path}: provider must be a non-empty string")
+    if not isinstance(provider, str) or re.fullmatch(r"[A-Za-z0-9_.-]+", provider) is None:
+        raise ContractError(f"{path}: provider must be a safe non-empty name")
     if not isinstance(preview, dict):
         raise ContractError(f"{path}: [preview] table is required")
     start = preview.get("start")
@@ -124,19 +123,20 @@ def read_preview_contract(path: Path) -> PreviewContract:
         raise ContractError(f"{path}: preview.start must be a non-empty argument array")
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise ContractError(f"{path}: preview.port must be an integer from 1 through 65535")
-    if not isinstance(health_path, str) or not health_path.startswith("/") or "\n" in health_path:
-        raise ContractError(f"{path}: preview.health_path must be an absolute HTTP path")
     if (
-        isinstance(timeout, bool)
-        or not isinstance(timeout, int | float)
-        or not math.isfinite(timeout)
-        or timeout <= 0
+        not isinstance(health_path, str)
+        or not health_path.startswith("/")
+        or health_path.startswith("//")
+        or "?" in health_path
+        or "#" in health_path
     ):
-        raise ContractError(f"{path}: preview.startup_timeout_seconds must be positive")
+        raise ContractError(f"{path}: preview.health_path must be an absolute path without a query or fragment")
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
+        raise ContractError(f"{path}: preview.startup_timeout_seconds must be a positive integer")
     return PreviewContract(
         provider=provider,
         start=tuple(start),
         port=port,
         health_path=health_path,
-        startup_timeout_seconds=float(timeout),
+        startup_timeout_seconds=timeout,
     )

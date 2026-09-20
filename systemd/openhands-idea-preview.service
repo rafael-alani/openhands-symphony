@@ -24,8 +24,8 @@ ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-IPAddressDeny=any
-IPAddressAllow=localhost
+# Dependency installation and prototype API calls need outbound networking.
+# Preview commands must bind HOST=127.0.0.1; operator access is through SSH.
 ReadWritePaths=/var/lib/openhands-preview
 CapabilityBoundingSet=
 LockPersonality=true

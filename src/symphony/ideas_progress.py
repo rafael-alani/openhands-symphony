@@ -75,6 +75,20 @@ def previous_results(progress: bytes) -> dict[str, SectionResult]:
     return values
 
 
+def mirrored_spec(progress: bytes) -> bytes:
+    """Remove recognized result blocks and recover the user-owned spec mirror."""
+
+    removals: list[tuple[int, int]] = []
+    for section in sections(progress):
+        match = RESULT_PATTERN.match(progress, section.header_end)
+        if match:
+            removals.append((section.header_end, match.end()))
+    output = bytearray(progress)
+    for start, end in reversed(removals):
+        del output[start:end]
+    return bytes(output)
+
+
 def render_progress(spec: bytes, results: dict[str, SectionResult]) -> bytes:
     additions: list[tuple[int, bytes]] = []
     for section in sections(spec):

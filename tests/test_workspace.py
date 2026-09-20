@@ -5,11 +5,39 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from conftest import create_worktree
 
 from symphony.workspace import WorkspaceError, WorkspaceManager, validation_argv
+
+
+@pytest.mark.parametrize("branch_kind", ["new", "local", "remote"])
+def test_lazy_checkout_fetch_uses_only_orchestrator_github_auth(tmp_path, monkeypatch, branch_kind):
+    from symphony import workspace
+
+    manager = WorkspaceManager(tmp_path / "workspaces")
+    (manager.root / "repositories/solo--project/.git").mkdir(parents=True)
+    monkeypatch.setenv("GH_CONFIG_DIR", str(tmp_path / "private-github"))
+    checkouts = []
+
+    def run(command, **kwargs):
+        if "worktree" in command:
+            assert kwargs["env"]["GH_CONFIG_DIR"] == str(tmp_path / "private-github")
+            assert "core.hooksPath=/dev/null" in command
+            checkouts.append(command)
+        return SimpleNamespace(stdout="")
+
+    def ref(command, **kwargs):
+        local = command[-1].startswith("refs/heads/")
+        present = (local and branch_kind == "local") or (not local and branch_kind == "remote")
+        return SimpleNamespace(returncode=0 if present else 1)
+
+    monkeypatch.setattr(workspace, "_run", run)
+    monkeypatch.setattr(workspace.subprocess, "run", ref)
+    manager.checkout_run(run_id="test", repository="solo/project", branch="ideas/test", base_branch="main")
+    assert len(checkouts) == 1
 
 
 def test_workspace_parents_remain_agent_traversable_under_service_umask(tmp_path):

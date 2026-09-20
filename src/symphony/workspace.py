@@ -173,12 +173,18 @@ class WorkspaceManager:
             ).returncode
             == 0
         )
+        # A partial clone may fetch new blobs while materializing the checkout.
+        # That Git operation belongs to the orchestrator, not the clean
+        # validator environment. Never pass this environment to model commands.
+        checkout_environment = orchestrator_environment()
         if local_branch:
-            _run(["git", "-C", str(repository_dir), "worktree", "add", str(worktree), branch], timeout=300)
+            _run(["git", "-c", "core.hooksPath=/dev/null", "-C", str(repository_dir), "worktree", "add", str(worktree), branch],
+                 timeout=300, env=checkout_environment)
         elif remote_branch:
             _run(
                 [
                     "git",
+                    "-c", "core.hooksPath=/dev/null",
                     "-C",
                     str(repository_dir),
                     "worktree",
@@ -189,11 +195,13 @@ class WorkspaceManager:
                     f"origin/{branch}",
                 ],
                 timeout=300,
+                env=checkout_environment,
             )
         else:
             _run(
                 [
                     "git",
+                    "-c", "core.hooksPath=/dev/null",
                     "-C",
                     str(repository_dir),
                     "worktree",
@@ -204,6 +212,7 @@ class WorkspaceManager:
                     base_revision or f"origin/{base_branch}",
                 ],
                 timeout=300,
+                env=checkout_environment,
             )
         return worktree
 

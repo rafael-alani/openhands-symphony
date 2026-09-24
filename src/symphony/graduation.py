@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -17,7 +18,7 @@ from .config import Config, load_config
 from .github import GhCLIBackend, GitHubError
 from .ideas_contract import safe_path, validate_spec
 from .ideas_github import RUNTIME_PATH, GhIdeasBackend
-from .ideas_progress import IdeaSection, SectionResult, mirrored_spec, previous_results, sections
+from .ideas_progress import IdeaSection, SectionResult, affected_sections, mirrored_spec, previous_results, sections
 from .intake import validate_repository_name
 from .models import IdeaSnapshot
 from .preview_queue import PreviewQueue
@@ -33,6 +34,30 @@ INTAKE_LABELS = {"agent:ready", "agent:claude", "agent:codex", "agent:antigravit
 
 class GraduationError(RuntimeError):
     pass
+
+
+def guard_hack_campaign(config: Config, repository: str, store: Store | None = None) -> None:
+    """Read-only graduation fence, including dry runs before a Store is opened."""
+    if store is not None:
+        active = store.hack_active(repository)
+    else:
+        database = config.service.state_dir / "state.db"
+        if not database.exists():
+            return
+        try:
+            with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True) as connection:
+                has_campaigns = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hack_campaigns'"
+                ).fetchone()
+                active = bool(has_campaigns and connection.execute(
+                    "SELECT 1 FROM hack_campaigns WHERE repository=? "
+                    "AND state IN ('starting','active','draining','polishing','publishing')",
+                    (repository,),
+                ).fetchone())
+        except sqlite3.Error as exc:
+            raise GraduationError("cannot verify campaign state before graduation") from exc
+    if active:
+        raise GraduationError("repository has an active hack campaign; finish the campaign before graduation")
 
 
 @dataclass(frozen=True)
@@ -268,11 +293,11 @@ def _trusted_results(spec: bytes, progress: bytes) -> dict[str, SectionResult]:
         return {}
     results = previous_results(progress)
     previous_spec = mirrored_spec(progress)
-    previous = {(section.title, section.slug): section.body for section in sections(previous_spec)}
+    changed = {section.slug for section in affected_sections(previous_spec, spec)}
     return {
         section.slug: results[section.slug]
         for section in sections(spec)
-        if section.slug in results and previous.get((section.title, section.slug)) == section.body
+        if section.slug in results and section.slug not in changed
     }
 
 
@@ -455,6 +480,7 @@ class Graduator:
 
     def plan(self, repository: str) -> GraduationPlan:
         validate_repository_name(repository)
+        guard_hack_campaign(self.config, repository, self.store)
         if repository not in self.config.ideas.repositories:
             raise GraduationError(f"repository is not ideas-allowlisted: {repository}")
         if repository in self.config.github.allowed_repositories:
@@ -509,6 +535,7 @@ class Graduator:
             if not acquired_lock:
                 raise GraduationError("another graduation operation is active")
         try:
+            guard_hack_campaign(self.config, repository, self.store)
             original_config = self.config_path.read_bytes()
             if hashlib.sha256(original_config).hexdigest() != plan.config_sha256:
                 raise GraduationError("configuration changed during graduation; review a new dry run")

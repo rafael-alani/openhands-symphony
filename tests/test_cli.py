@@ -14,6 +14,37 @@ from symphony.cli import (
 )
 
 
+@pytest.mark.parametrize("action", ["start", "stop", "status"])
+def test_hack_cli_routes_campaign_commands_and_displays_state(monkeypatch, capsys, action):
+    campaign = {
+        "id": "campaign-1", "repository": "solo/project", "state": "starting", "home_tier": "idea",
+        "branch": "hack/test", "expires_at": "2026-09-21T00:00:00+00:00", "pr_url": None,
+    }
+    calls = []
+    state = SimpleNamespace(list_campaigns=lambda **kwargs: [campaign], list_tasks=lambda _: [])
+    hack = SimpleNamespace(
+        state=state,
+        start=lambda repo, **kw: calls.append(("start", repo, kw)) or campaign,
+        stop=lambda repo: calls.append(("stop", repo, {})) or campaign,
+    )
+    coordinator = SimpleNamespace(hack=hack, refresh_vault=lambda: calls.append("vault"))
+    monkeypatch.setattr(cli, "build_coordinator", lambda _: (None, None, coordinator))
+    argv = ["agentctl", "hack", action, "solo/project"]
+    if action == "start":
+        argv += ["--hours", "2.5"]
+    monkeypatch.setattr("sys.argv", argv)
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == 0
+    if action == "start":
+        assert calls == ["vault", ("start", "solo/project", {"hours": 2.5})]
+    elif action == "stop":
+        assert calls == [("stop", "solo/project", {})]
+    else:
+        assert not calls
+    assert "hack=solo/project state=starting" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("missing", [False, True])
 def test_vault_check_validates_linked_files_without_config_or_mutation(tmp_path, monkeypatch, capsys, missing):
     note = tmp_path / "Project.md"

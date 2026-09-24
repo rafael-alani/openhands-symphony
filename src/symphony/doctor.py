@@ -405,6 +405,18 @@ def _service_failure_detail(service: str, state: str) -> str:
     return f"state={state or 'unknown'}; journal unavailable (exit {status})"
 
 
+def _allowlist_check(config: Config) -> Check:
+    return Check(
+        "config allowlist",
+        bool(config.github.allowed_repositories or config.ideas.repositories or config.vault.enabled)
+        and all("CHANGE_ME" not in repository for repository in (
+            *config.github.allowed_repositories, *config.ideas.repositories, *config.hack.repositories,
+        )),
+        f"tier1={','.join(config.github.allowed_repositories)}; ideas={','.join(config.ideas.repositories)}; "
+        f"vault={config.vault.enabled}; hack={','.join(config.hack.repositories)}",
+    )
+
+
 def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[Check]:
     versions = _version_manifest()
     keyring_status, keyring_output = _run(["systemctl", "is-active", "openhands-agent-keyring.service"])
@@ -454,12 +466,7 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
         )
     worker_gh_exposed, worker_gh_detail = _credential_exposure(Path("/var/lib/openhands-agent/.config/gh/hosts.yml"))
     checks = [
-        Check(
-            "config allowlist",
-            bool(config.github.allowed_repositories)
-            and all("CHANGE_ME" not in repository for repository in config.github.allowed_repositories),
-            f"tier1={','.join(config.github.allowed_repositories)}; ideas={','.join(config.ideas.repositories)}",
-        ),
+        _allowlist_check(config),
         Check(
             "localhost service bind",
             config.service.listen_host in {"127.0.0.1", "::1", "localhost"},
@@ -670,6 +677,15 @@ def run_doctor(config: Config, store: Store, coordinator: Coordinator) -> list[C
             )
         )
     checks.extend(_idea_project_checks(config, store))
+    if config.hack.enabled:
+        from .hack_store import HackStore
+
+        campaigns = HackStore(store).list_campaigns()
+        checks.append(Check(
+            "hack campaigns", True,
+            f"active={len(campaigns)}; max_parallel={config.hack.max_parallel}; "
+            f"reserved_slots={config.hack.reserve_slots}; provider={config.hack.provider}",
+        ))
     if config.vault.enabled:
         root = config.vault.path
         projects = root / config.vault.projects_dir

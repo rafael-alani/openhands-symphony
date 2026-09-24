@@ -316,19 +316,16 @@ class PreviewManager:
                 os.killpg(preview.process.pid, signal.SIGTERM)
                 preview.process.wait(timeout=10)
             except (ProcessLookupError, subprocess.TimeoutExpired):
-                try:
-                    os.killpg(preview.process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                try:
-                    preview.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
-        else:
-            try:
-                os.killpg(preview.process.pid, signal.SIGKILL)
-            except ProcessLookupError:
                 pass
+        # Parent exit is not proof that a dev server's descendants exited.
+        try:
+            os.killpg(preview.process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            preview.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
         close = getattr(preview.log_handle, "close", None)
         if close:
             close()
@@ -524,6 +521,7 @@ class PreviewManager:
             if not commit:
                 continue
             release = self._release_dir(repository, commit)
+            restarted = None
             try:
                 runtime = self._runtime_for_release(release)
                 restarted = self._start_release(repository, commit, release, runtime)
@@ -539,6 +537,8 @@ class PreviewManager:
                     detail="preview process restarted after an unexpected exit",
                 )
             except (OSError, subprocess.SubprocessError, IdeaContractError, PreviewManagerError) as exc:
+                if restarted is not None:
+                    self._stop_preview(restarted)
                 next_status = self._write_status(
                     repository,
                     desired_commit=status.desired_commit if status else commit,
@@ -554,6 +554,7 @@ class PreviewManager:
         allowed = self._allowed_repositories()
         for state_path in sorted(self.projects_dir.glob("*/state.json")):
             status = None
+            preview = None
             try:
                 payload = json.loads(state_path.read_text(encoding="utf-8"))
                 status = PreviewStatus(**payload)
@@ -589,6 +590,8 @@ class PreviewManager:
                 self._write_project_state(restored)
                 self._cleanup(status.repository, restored)
             except (OSError, ValueError, TypeError, subprocess.SubprocessError, IdeaContractError, PreviewManagerError) as exc:
+                if preview is not None:
+                    self._stop_preview(preview)
                 if status is not None:
                     failed = self._write_status(
                         status.repository,

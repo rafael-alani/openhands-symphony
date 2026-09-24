@@ -52,6 +52,7 @@ class Coordinator:
         self._operation_owner = f"coordinator:{uuid.uuid4()}"
         self.provider_slots = provider_slots or ProviderSlots(config.scheduler.provider_concurrency, set(providers))
         self.vault = None
+        self.hack = None
 
     def apply_vault_config(self) -> None:
         if self.vault is None:
@@ -60,6 +61,8 @@ class Coordinator:
         self.github.allowlist = set(self.config.github.allowed_repositories)
         self.ideas.config = self.config
         self.ideas.github.allowlist = set(self.config.ideas.repositories)
+        if self.hack is not None:
+            self.hack.config = self.config
 
     def refresh_vault(self) -> None:
         if self.vault is not None:
@@ -82,6 +85,8 @@ class Coordinator:
         return candidates
 
     def enqueue(self, snapshot: IssueSnapshot) -> tuple[Job, bool]:
+        if self.store.hack_active(snapshot.repository):
+            raise IntakeError("GitHub issue intake is suspended by an active hack campaign")
         if not self.store.vault_allows(snapshot.repository, "github"):
             raise IntakeError("GitHub issue intake is suspended by the project note")
         if snapshot.repository not in self.config.github.allowed_repositories:
@@ -274,6 +279,8 @@ class Coordinator:
             except GitHubError as exc:
                 results.append((job.repository, job.issue_number, f"pr-status-error: {exc}"))
         for repository in self.config.github.allowed_repositories:
+            if self.store.hack_active(repository):
+                continue
             if not self.store.vault_allows(repository, "github"):
                 continue
             try:

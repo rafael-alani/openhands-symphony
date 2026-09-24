@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .execution import ExecutionRef, RepositoryLeases
+from .hack_store import initialize_schema as initialize_hack_schema
 from .models import (
     ACTIVE_STATES,
     IDEA_ACTIVE_STATES,
@@ -25,7 +26,7 @@ from .models import (
     utcnow,
 )
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 ISSUE_RUN_KIND = "github-issue"
 IDEA_RUN_KIND = "idea-spec"
 
@@ -328,6 +329,7 @@ class Store:
                     PRIMARY KEY(repository, source)
                 )
             """)
+            initialize_hack_schema(connection)
             connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @staticmethod
@@ -431,6 +433,14 @@ class Store:
     def repository_has_lease(self, repository: str) -> bool:
         with self.connect() as connection:
             return connection.execute("SELECT 1 FROM leases WHERE repository=?", (repository,)).fetchone() is not None
+
+    def hack_active(self, repository: str) -> bool:
+        with self.connect() as connection:
+            return connection.execute(
+                "SELECT 1 FROM hack_campaigns WHERE repository=? "
+                "AND state IN ('starting','active','draining','polishing','publishing')",
+                (repository,),
+            ).fetchone() is not None
 
     def vault_allows(self, repository: str, mode: str) -> bool:
         with self.connect() as connection:
@@ -1029,11 +1039,16 @@ class Store:
                 LEFT JOIN provider_backoff b ON b.provider=j.implementation_provider AND b.until_at>?
                 WHERE j.state=? AND j.cancel_requested=0 AND j.pause_requested=0 AND b.provider IS NULL
                   AND NOT EXISTS (
+                    SELECT 1 FROM hack_campaigns h WHERE h.repository=j.repository
+                    AND h.state IN ('starting','active','draining','polishing','publishing')
+                  )
+                  AND NOT EXISTS (
                     SELECT 1 FROM vault_projects v WHERE v.repository=j.repository
                     AND (v.mode!='github' OR v.desired_mode!=v.mode OR v.status!='ready')
                   )
                   AND NOT EXISTS (
                     SELECT 1 FROM leases l WHERE l.concurrency_key=j.concurrency_key
+                    OR (l.repository=j.repository AND l.run_kind!='github-issue')
                   )
                 ORDER BY
                     j.retry_requested DESC,
@@ -1108,11 +1123,15 @@ class Store:
                 LEFT JOIN provider_backoff b ON b.provider=r.implementation_provider AND b.until_at>?
                 WHERE r.state=? AND r.cancel_requested=0 AND b.provider IS NULL
                   AND NOT EXISTS (
+                    SELECT 1 FROM hack_campaigns h WHERE h.repository=r.repository
+                    AND h.state IN ('starting','active','draining','polishing','publishing')
+                  )
+                  AND NOT EXISTS (
                     SELECT 1 FROM vault_projects v WHERE v.repository=r.repository
                     AND (v.mode!='idea' OR v.desired_mode!=v.mode OR v.status!='ready')
                   )
                   AND NOT EXISTS (
-                    SELECT 1 FROM leases l WHERE l.concurrency_key=r.repository
+                    SELECT 1 FROM leases l WHERE l.concurrency_key=r.repository OR l.repository=r.repository
                   )
                 ORDER BY r.retry_requested DESC, r.updated_at ASC, r.created_at ASC
                 """,

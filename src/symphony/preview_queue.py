@@ -8,7 +8,9 @@ import subprocess
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
+from .config import Config
 from .intake import validate_repository_name
 from .models import IdeaRun, utcnow
 from .store import Store
@@ -16,6 +18,34 @@ from .validation import redact, validation_environment
 from .workspace import WorkspaceError
 
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+
+def preview_allowlist(config: Config, store: Store) -> tuple[str, ...]:
+    """Keep accepted campaign demos reviewable while their explicit opt-in remains."""
+    from .hack_store import ACTIVE_CAMPAIGN_STATES, HackStore
+
+    repositories = set(config.ideas.repositories)
+    if config.hack.enabled:
+        for campaign in HackStore(store).list_campaigns(active_only=False):
+            if (campaign["repository"] in config.hack.repositories
+                    and (campaign["state"] in ACTIVE_CAMPAIGN_STATES
+                         or (campaign["state"] == "completed" and campaign.get("result_commit")))):
+                repositories.add(campaign["repository"])
+    return tuple(sorted(repositories))
+
+
+def campaign_preview_supersedes(config: Config, store: Store, run: IdeaRun) -> bool:
+    """An old Ideas publication must not roll back a subsequently completed demo."""
+    from .hack_store import HackStore
+
+    if not config.hack.enabled or run.repository not in config.hack.repositories:
+        return False
+    return any(
+        campaign["repository"] == run.repository and campaign["state"] == "completed"
+        and campaign.get("result_commit")
+        and (campaign.get("finished_at") or campaign["updated_at"]) > (run.finished_at or run.updated_at)
+        for campaign in HackStore(store).list_campaigns(active_only=False)
+    )
 
 
 def sha256_file(path: Path) -> str:
@@ -220,16 +250,50 @@ class PreviewQueue:
         return True
 
     def sync_store(self, store: Store, repositories: tuple[str, ...]) -> None:
+        from .hack_store import HackStore
+
+        campaign_commits = {
+            (campaign["repository"], campaign["result_commit"])
+            for campaign in HackStore(store).list_campaigns(active_only=False)
+            if campaign.get("result_commit")
+        }
         for repository in repositories:
             status = self.status(repository)
             if status is None or store.get_idea_project(repository) is None:
                 continue
             latest = store.latest_published_idea_run(repository)
             state = status.state
-            if latest and latest.published_commit != status.desired_commit:
+            if (latest and latest.published_commit != status.desired_commit
+                    and (repository, status.desired_commit) not in campaign_commits):
                 state = "pending"
             store.update_idea_preview(
                 repository,
                 state,
                 last_good_commit=status.last_good_commit,
             )
+
+    def recover_campaign_previews(self, config: Config, store: Store) -> list[tuple[str, str]]:
+        """Retry the durable final handoff if completion preceded an archive/queue failure."""
+        from .hack_store import HackStore
+
+        if not config.hack.enabled:
+            return []
+        latest = {campaign["repository"]: campaign for campaign in HackStore(store).list_campaigns(active_only=False)}
+        results = []
+        for repository, campaign in latest.items():
+            if (repository not in config.hack.repositories or campaign["state"] != "completed"
+                    or not campaign.get("result_commit") or not campaign.get("worktree")):
+                continue
+            idea = store.latest_published_idea_run(repository)
+            if idea and (idea.finished_at or idea.updated_at) > (campaign.get("finished_at") or campaign["updated_at"]):
+                continue
+            setup_script = config.repository(repository).setup_script
+            if not setup_script and (Path(campaign["worktree"]) / ".openhands/setup.sh").is_file():
+                setup_script = ".openhands/setup.sh"
+            try:
+                run = SimpleNamespace(repository=repository, published_commit=campaign["result_commit"], worktree=campaign["worktree"])
+                if self.enqueue(run, setup_script):
+                    results.append((repository, "completed campaign preview queued"))
+            except Exception as exc:
+                results.append((repository, f"campaign-preview-error: {redact(str(exc), 2000)}"))
+        return results

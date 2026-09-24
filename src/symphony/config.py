@@ -59,6 +59,21 @@ class VaultConfig:
 
 
 @dataclass(frozen=True)
+class HackConfig:
+    enabled: bool = False
+    repositories: tuple[str, ...] = ()
+    provider: str = "codex"
+    max_parallel: int = 4
+    max_tasks: int = 100
+    reserve_slots: int = 1
+    task_timeout_seconds: int = 1800
+    fast_gate_timeout_seconds: int = 300
+    polish_seconds: int = 300
+    milestone_every: int = 5
+    publish_ideas: bool = False
+
+
+@dataclass(frozen=True)
 class SchedulerConfig:
     poll_seconds: int = 60
     reconcile_seconds: int = 300
@@ -106,6 +121,7 @@ class Config:
     repositories: dict[str, RepositoryConfig]
     ideas: IdeasConfig = IdeasConfig()
     vault: VaultConfig = VaultConfig()
+    hack: HackConfig = HackConfig()
 
     def repository(self, name: str) -> RepositoryConfig:
         return self.repositories.get(name, RepositoryConfig())
@@ -214,6 +230,29 @@ def _validate_config(config: Config) -> None:
             raise ValueError("vault.provider must name an enabled provider")
         if config.vault.quiet_seconds < 0 or not 1024 <= config.vault.port_start <= config.vault.port_end <= 65535:
             raise ValueError("invalid vault quiet period or preview port range")
+
+    hack = config.hack
+    if len(set(hack.repositories)) != len(hack.repositories):
+        raise ValueError("hack.repositories contains duplicates")
+    for repository in hack.repositories:
+        if not REPOSITORY_PATTERN.fullmatch(repository) or ".." in repository:
+            raise ValueError(f"invalid hack repository identifier: {repository!r}")
+    if not 1 <= hack.max_parallel <= 6:
+        raise ValueError("hack.max_parallel must be between 1 and 6")
+    for name in ("max_tasks", "task_timeout_seconds", "fast_gate_timeout_seconds", "polish_seconds", "milestone_every"):
+        if getattr(hack, name) <= 0:
+            raise ValueError(f"hack.{name} must be greater than zero")
+    if hack.reserve_slots < 1:
+        raise ValueError("hack.reserve_slots must preserve at least one slot for GitHub work")
+    if hack.enabled:
+        if not hack.repositories:
+            raise ValueError("hack.repositories must explicitly allowlist campaign repositories")
+        if hack.provider not in config.providers or not config.providers[hack.provider].enabled:
+            raise ValueError("hack.provider must name an enabled provider")
+        if config.scheduler.global_concurrency <= hack.reserve_slots:
+            raise ValueError("scheduler.global_concurrency must exceed hack.reserve_slots")
+        if config.scheduler.provider_concurrency.get(hack.provider, 1) <= 0:
+            raise ValueError("hack.provider must have positive provider concurrency")
 
     scheduler = config.scheduler
     positive = {
@@ -377,6 +416,20 @@ def load_config(path: str | Path | None = None) -> Config:
             approval_policy=str(value.get("approval_policy", "safe-code-only")),
         )
 
-    config = Config(service, github, scheduler, providers, repositories, ideas, vault)
+    hack_raw = raw.get("hack", {})
+    hack = HackConfig(
+        enabled=bool(hack_raw.get("enabled", False)),
+        repositories=tuple(hack_raw.get("repositories", [])),
+        provider=str(hack_raw.get("provider", "codex")),
+        max_parallel=int(hack_raw.get("max_parallel", 4)),
+        max_tasks=int(hack_raw.get("max_tasks", 100)),
+        reserve_slots=int(hack_raw.get("reserve_slots", 1)),
+        task_timeout_seconds=int(hack_raw.get("task_timeout_seconds", 1800)),
+        fast_gate_timeout_seconds=int(hack_raw.get("fast_gate_timeout_seconds", 300)),
+        polish_seconds=int(hack_raw.get("polish_seconds", 300)),
+        milestone_every=int(hack_raw.get("milestone_every", 5)),
+        publish_ideas=bool(hack_raw.get("publish_ideas", False)),
+    )
+    config = Config(service, github, scheduler, providers, repositories, ideas, vault, hack)
     _validate_config(config)
     return config

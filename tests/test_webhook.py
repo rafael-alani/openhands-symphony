@@ -87,3 +87,36 @@ def test_ideas_mode_ignores_issue_events_without_touching_github(tmp_path):
     assert response.status_code == 200
     assert "ignored" in response.json()
     assert not store.list_jobs()
+
+
+def test_campaign_board_push_wakes_integrator_once_without_normal_intake(tmp_path):
+    from symphony.hack_store import HackStore
+
+    config = make_config(tmp_path)
+    config.service.webhook_secret_file.write_text("test-secret\n")
+    store = Store(config.service.state_dir / "state.db")
+    HackStore(store).start_campaign("solo/project", "github", "main", "a" * 40, "codex", 1)
+    coordinator = Coordinator(config, store, FakeGitHub([]), {"codex": FakeProvider("codex")})
+    scheduler = DummyScheduler()
+    calls = []
+    scheduler.tick = lambda: calls.append("wake")
+    app = create_app(store, coordinator, scheduler, config.service.webhook_secret_file)
+    payload = json.dumps({
+        "repository": {"full_name": "solo/project", "private": True, "default_branch": "main"},
+        "ref": "refs/heads/main", "commits": [{"modified": ["hack/BOARD.md"]}],
+    }).encode()
+    signature = "sha256=" + hmac.new(b"test-secret", payload, hashlib.sha256).hexdigest()
+
+    async def deliver():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            headers = {"X-GitHub-Event": "push", "X-GitHub-Delivery": "campaign-board", "X-Hub-Signature-256": signature}
+            first = await client.post("/webhooks/github", content=payload, headers=headers)
+            second = await client.post("/webhooks/github", content=payload, headers=headers)
+            return first, second
+
+    first, second = asyncio.run(deliver())
+    assert first.json()["campaign_reconcile"] is True
+    assert second.json()["duplicate"] is True
+    assert calls == ["wake"]
+    assert not store.list_jobs()
+    assert not store.list_idea_runs()

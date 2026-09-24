@@ -20,7 +20,7 @@ from .ideas_progress import (
 from .ideas_prompting import idea_implementation_prompt
 from .ideas_reports import IdeaReportWriter
 from .models import IdeaRun, IdeaRunState, IdeaSnapshot, ProviderOutcome, ProviderRun
-from .preview_queue import PreviewQueue
+from .preview_queue import PreviewQueue, campaign_preview_supersedes, preview_allowlist
 from .providers.base import ProviderAdapter
 from .providers.openhands import OpenHandsProviderError
 from .store import Store, StoreError
@@ -59,6 +59,8 @@ class IdeasCoordinator:
         self.vault = None
 
     def observe(self, snapshot: IdeaSnapshot) -> tuple[IdeaRun, bool]:
+        if self.store.hack_active(snapshot.repository):
+            raise IdeasIntakeError("Ideas intake is suspended by an active hack campaign")
         if not self.store.vault_allows(snapshot.repository, "idea"):
             raise IdeasIntakeError("Ideas intake is suspended by the project note")
         if snapshot.repository not in self.config.ideas.repositories:
@@ -105,9 +107,12 @@ class IdeasCoordinator:
 
     def reconcile(self) -> list[tuple[str, str]]:
         results = self.recover_expired_leases()
-        self.preview_deployments.publish_allowlist(self.config.ideas.repositories)
+        self.preview_deployments.publish_allowlist(preview_allowlist(self.config, self.store))
+        results.extend(self.preview_deployments.recover_campaign_previews(self.config, self.store))
         self.preview_deployments.sync_store(self.store, self.config.ideas.repositories)
         for repository in self.config.ideas.repositories:
+            if self.store.hack_active(repository):
+                continue
             try:
                 run, created = self.observe_repository(repository)
                 results.append((repository, "created" if created else str(run.state)))
@@ -119,6 +124,8 @@ class IdeasCoordinator:
         return results
 
     def _dispatch_preview(self, run: IdeaRun) -> None:
+        if campaign_preview_supersedes(self.config, self.store, run):
+            return
         try:
             queued = self.preview_deployments.enqueue(
                 run,
@@ -314,6 +321,7 @@ class IdeasCoordinator:
 
     def _guard_publication(self, run: IdeaRun, worktree: Path) -> IdeaSnapshot:
         self._require_running(run)
+        self.workspaces.verify_run_integrity(run.id, run.repository, worktree)
         if self.vault is not None:
             from .vault import VaultError
 
@@ -361,6 +369,8 @@ class IdeasCoordinator:
             self.workspaces.fetch(worktree, run.repository)
             self.workspaces.rebase_onto_origin(worktree, run.default_branch)
             rebased = True
+            if not question_only:
+                self._check_rebased_preview(run, worktree)
             self._guard_publication(run, worktree)
         try:
             self.workspaces.push_default(worktree, run.repository, run.default_branch)
@@ -370,9 +380,21 @@ class IdeasCoordinator:
             self._guard_publication(run, worktree)
             self.workspaces.fetch(worktree, run.repository)
             self.workspaces.rebase_onto_origin(worktree, run.default_branch)
+            if not question_only:
+                self._check_rebased_preview(run, worktree)
             self._guard_publication(run, worktree)
             self.workspaces.push_default(worktree, run.repository, run.default_branch)
         return self.workspaces.head(worktree)
+
+    def _check_rebased_preview(self, run: IdeaRun, worktree: Path) -> None:
+        # A conflict-free rebase can still incorporate an incompatible code
+        # change. The mandatory boot gate must cover what we actually push.
+        self._require_running(run)
+        self.workspaces.verify_run_integrity(run.id, run.repository, worktree)
+        runtime = parse_runtime((worktree / ".symphony/idea.toml").read_bytes())
+        if runtime.provider != run.implementation_provider:
+            raise IdeaContractError("an idea run cannot change its provider while executing")
+        self.preview.boot_and_capture(worktree, runtime, ())
 
     def _retry_or_fail(self, run: IdeaRun, phase: str, reason: str) -> IdeaRun:
         # Pre-provider failures never increment attempt. Requeueing them would
@@ -454,7 +476,14 @@ class IdeasCoordinator:
                     phase="spec-modified",
                     question="The implementation modified the human-owned idea spec; nothing was pushed.",
                 )
-            affected = affected_sections(previous_spec, run.spec_content)
+            changed = {section.slug for section in affected_sections(previous_spec, run.spec_content)}
+            prior = previous_results(run.previous_progress)
+            affected = tuple(
+                section for section in sections(run.spec_content)
+                if section.slug in changed
+                or section.slug not in prior
+                or prior[section.slug].status != "done"
+            )
             if result.outcome in {ProviderOutcome.NEEDS_GUIDANCE, ProviderOutcome.BLOCKED}:
                 question = result.question_or_reason or result.summary
                 self._write_progress(

@@ -16,7 +16,7 @@ from .store import Store
 def validate_operational_config(config: Config) -> None:
     placeholders = [
         repository
-        for repository in (*config.github.allowed_repositories, *config.ideas.repositories)
+        for repository in (*config.github.allowed_repositories, *config.ideas.repositories, *config.hack.repositories)
         if "CHANGE_ME" in repository
     ]
     if placeholders:
@@ -65,10 +65,16 @@ def build_coordinator(config_path: str | Path | None = None) -> tuple[Config, St
         providers,
         provider_slots,
     )
+    from .hack_coordinator import GhHackBackend, HackCoordinator
+
+    coordinator.hack = HackCoordinator(
+        config, store, GhHackBackend(config.hack.repositories), providers, provider_slots,
+    )
     if config.vault.enabled:
         from .vault import VaultBridge
 
         coordinator.vault = VaultBridge(config, store)
         coordinator.apply_vault_config()
         coordinator.ideas.vault = coordinator.vault
+        coordinator.hack.vault = coordinator.vault
     return coordinator.config, store, coordinator

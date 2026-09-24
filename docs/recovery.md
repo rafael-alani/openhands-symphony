@@ -47,6 +47,14 @@ Do not delete an orphan generated branch. Reconciliation intentionally marks it 
 
 ## Migrations
 
+Schema 9 adds durable hack campaigns and tasks while retaining the shared
+lease table. Use `agentctl hack status` to inspect these after a restart.
+Expired campaign turns are canceled and blocked, without an automatic retry;
+edit the board to request another attempt. If cancellation cannot be confirmed,
+the repository remains fenced. The integrator recovers prepared branch writes
+and uses the campaign branch identity to avoid duplicate final PRs. A legacy
+graduation cannot run while its repository has an active campaign.
+
 SQLite uses `PRAGMA user_version`. Migrations run transactionally at service start, reject a database newer than the binary, and only move forward. Before `agentctl update`, the installer preserves config/state and a production operator should take the backup above. Rollback means reinstalling the previous versions from `versions.env` and restoring the pre-migration database if the schema changed.
 
 Provider/Canvas upgrades are never automatic. Antigravity's built-in updater is disabled. Update `versions.env` and checksums, rerun the capability/headless-interface spikes, run all tests, then run `agentctl update`.

@@ -51,8 +51,29 @@ Claude and Codex implementation sessions default to full provider permissions
 inside the dedicated VM. Reviews remain read-only. Preview setup can download
 dependencies and build each fresh release using `.openhands/setup.sh`.
 
-See [Syncthing/Obsidian setup and operation](docs/obsidian.md). Hackathon mode
-remains a [separate proposal](docs/hack-tier.md).
+See [Syncthing/Obsidian setup and operation](docs/obsidian.md).
+
+## Time-boxed hack campaigns
+
+An explicitly enabled private repository can temporarily run parallel lanes:
+
+```bash
+agentctl hack start owner/repo --hours 24
+agentctl hack status owner/repo
+agentctl hack stop owner/repo
+```
+
+The campaign suspends normal issue/note intake, scaffolds a shared skeleton,
+dispatches board tasks into disjoint file footprints, and integrates passing
+work on a campaign branch. A fast build and boot check guards integration.
+Stopping or expiry closes the campaign with one final draft PR; an Ideas home
+repository can separately opt into a guarded final default-branch push.
+Normal intake resumes after closure. Existing global/provider concurrency
+limits still apply, with capacity reserved for GitHub work.
+
+Configure `[hack]` before starting. See the [campaign operator guide](docs/hack-operations.md)
+and [original plan](docs/hack-tier.md). The [completion audit](docs/implementation-audit.md)
+distinguishes local verification from deployed acceptance.
 
 ## Clean install
 

@@ -75,6 +75,17 @@ def create_app(
         )
         if not inserted:
             return {"accepted": True, "duplicate": True}
+        if x_github_event == "push" and repository and store.hack_active(repository):
+            repo_payload = payload.get("repository") or {}
+            default_branch = str(repo_payload.get("default_branch") or "")
+            if repo_payload.get("private") is not True:
+                return {"accepted": True, "ignored": "hack repository is not private"}
+            if str(payload.get("ref") or "") != f"refs/heads/{default_branch}":
+                return {"accepted": True, "ignored": "campaign board is read from the default branch"}
+            # The integrator reads the authoritative board at an exact remote
+            # commit. A webhook only wakes it; payload text is never executed.
+            scheduler.tick()
+            return {"accepted": True, "campaign_reconcile": True}
         if x_github_event == "push" and repository and ideas:
             repo_payload = payload.get("repository") or {}
             default_branch = str(repo_payload.get("default_branch") or "")

@@ -97,6 +97,23 @@ ideasync remove owner/repository
 
 Polling/reconciliation intervals, lease/heartbeat durations, global concurrency, attempt/correction/review bounds, validation timeout, and backoff bounds. `[scheduler.provider_concurrency]` caps each provider independently. Setting a provider to zero makes it unavailable to claims.
 
+## `[hack]`
+
+Campaigns are disabled by default and require their own exact `repositories`
+allowlist, including repositories created from vault notes. `provider` must be
+enabled and have positive configured capacity. `max_parallel` permits 1–6 lanes;
+`max_tasks` bounds discretionary model attempts, including board dispatch and
+director-requested retries. The mandatory scaffold and final polish are bounded
+separately. `reserve_slots` preserves at least one global slot for GitHub work.
+Global capacity must exceed that reservation.
+
+`task_timeout_seconds` bounds model turns, `fast_gate_timeout_seconds` bounds
+setup/build checks, `polish_seconds` starts closing before the hard expiry, and
+`milestone_every` controls screenshots. `publish_ideas` defaults false: a single
+final draft PR is the default for either home mode. Setting it true permits only
+a guarded final Ideas publication; GitHub home repositories still require a PR.
+See [campaign operations](hack-operations.md) for the board and lane contract.
+
 ## `[providers.<name>]`
 
 - `enabled`

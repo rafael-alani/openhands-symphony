@@ -161,6 +161,19 @@ def test_plan_does_not_trust_done_status_after_spec_body_changes(tmp_path) -> No
     assert plan.issues[0].status == "not started"
 
 
+def test_plan_does_not_trust_done_status_after_shared_brief_changes(tmp_path) -> None:
+    config_path = _write_config(tmp_path / "config.toml", tmp_path)
+    config = load_config(config_path)
+    previous = _spec()
+    current = previous.replace(b"\n## Complete feature", b"\nAll features must work offline.\n\n## Complete feature")
+    backend = FakeGraduationBackend(_snapshot(current, _progress(previous)))
+
+    plan = Graduator(config, config_path, backend).plan("solo/idea")
+
+    assert [issue.title for issue in plan.issues] == ["Complete feature", "Partial feature", "New feature"]
+    assert all(issue.status == "not started" for issue in plan.issues)
+
+
 def test_apply_moves_allowlist_archives_and_retires_claimed_idea_work(tmp_path) -> None:
     config_path = _write_config(tmp_path / "config.toml", tmp_path)
     config = load_config(config_path)

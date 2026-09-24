@@ -11,7 +11,14 @@ from pathlib import Path
 
 from .config import DEFAULT_CONFIG, load_config
 from .doctor import run_doctor
-from .graduation import GRADUATION_LOCK, GhGraduationBackend, GraduationError, Graduator, render_plan
+from .graduation import (
+    GRADUATION_LOCK,
+    GhGraduationBackend,
+    GraduationError,
+    Graduator,
+    guard_hack_campaign,
+    render_plan,
+)
 from .models import IdeaProject, IdeaRun, Job
 from .runtime import build_coordinator, validate_operational_config
 from .store import Store
@@ -148,6 +155,19 @@ def _idea_status_line(project: IdeaProject, run: IdeaRun | None, report_dir: Pat
     )
 
 
+def _hack_status(campaign: dict, tasks: list[dict]) -> None:
+    print(
+        f"hack={campaign['repository']} state={campaign['state']} campaign={campaign['id']} "
+        f"home={campaign['home_tier']} branch={campaign['branch']} expires={campaign['expires_at']} "
+        f"pr={campaign.get('pr_url') or '-'} note={campaign.get('note') or campaign.get('error') or '-'}"
+    )
+    for task in tasks:
+        print(
+            f"  task={task['id']} kind={task['kind']} lane={task['lane']} state={task['state']} "
+            f"conversation={task.get('conversation_id') or '-'} note={task.get('note') or task.get('error') or '-'}"
+        )
+
+
 def _job_needs_explicit_retry(job: Job | None) -> bool:
     if job is None:
         return False
@@ -222,6 +242,7 @@ def _stop_for_graduation() -> int:
 def _graduate(config_value: str | None, repository: str, approval_id: str | None) -> int:
     config_path = Path(config_value or os.environ.get("SYMPHONY_CONFIG") or DEFAULT_CONFIG).expanduser().resolve()
     config = load_config(config_path)
+    guard_hack_campaign(config, repository)
     if config.vault.enabled:
         vault_store = Store(config.service.state_dir / "state.db")
         if any(project["repository"] == repository for project in vault_store.vault_projects()):
@@ -280,6 +301,15 @@ def main() -> None:
     graduate = subparsers.add_parser("graduate")
     graduate.add_argument("repository")
     graduate.add_argument("--approve", metavar="PLAN_ID", help="apply the exact previously reviewed dry-run plan")
+    hack = subparsers.add_parser("hack", help="operate a bounded parallel campaign")
+    hack_commands = hack.add_subparsers(dest="hack_command", required=True)
+    hack_start = hack_commands.add_parser("start", help="suspend normal intake and queue the solo scaffold")
+    hack_start.add_argument("repository")
+    hack_start.add_argument("--hours", type=float, default=24, help="hard campaign deadline, up to 168 hours")
+    hack_stop = hack_commands.add_parser("stop", help="stop fan-out, drain, polish and publish once")
+    hack_stop.add_argument("repository")
+    hack_status = hack_commands.add_parser("status", help="show durable campaign and task state")
+    hack_status.add_argument("repository", nargs="?")
     vault_check = subparsers.add_parser("vault-check", help="validate a project note and linked checklist without changing anything")
     vault_check.add_argument("note", type=Path)
     vault_check.add_argument("--vault-root", type=Path, help="vault root for Obsidian vault-relative links")
@@ -353,6 +383,28 @@ def main() -> None:
             marker = "PASS" if check.ok else ("WARN" if not check.required else "FAIL")
             print(f"[{marker}] {check.name}: {check.detail}")
         raise SystemExit(0 if all(check.ok or not check.required for check in checks) else 1)
+    if args.command == "hack":
+        try:
+            if args.hack_command == "start":
+                coordinator.refresh_vault()
+                campaign = coordinator.hack.start(args.repository, hours=args.hours)
+                _hack_status(campaign, coordinator.hack.state.list_tasks(campaign["id"]))
+            elif args.hack_command == "stop":
+                campaign = coordinator.hack.stop(args.repository)
+                if campaign:
+                    _hack_status(campaign, coordinator.hack.state.list_tasks(campaign["id"]))
+                else:
+                    print(f"no active campaign: {args.repository}")
+            else:
+                for campaign in coordinator.hack.state.list_campaigns(active_only=False):
+                    if not args.repository or campaign["repository"] == args.repository:
+                        _hack_status(campaign, coordinator.hack.state.list_tasks(campaign["id"]))
+        except Exception as exc:
+            from .validation import redact
+
+            print(f"hack error: {redact(str(exc), 2000)}", file=sys.stderr)
+            raise SystemExit(2) from None
+        raise SystemExit(0)
     if args.command == "status":
         coordinator.ideas.preview_deployments.sync_store(store, config.ideas.repositories)
         active = subprocess.run(
@@ -377,8 +429,13 @@ def main() -> None:
             print(_idea_status_line(project, latest[project.repository], config.service.report_dir))
         for project in store.vault_projects():
             print(f"vault={project['repository']} mode={project['mode']} desired={project['desired_mode']} status={project['status']} note={project['note_path']}")
+        if coordinator.hack:
+            for campaign in coordinator.hack.state.list_campaigns():
+                _hack_status(campaign, coordinator.hack.state.list_tasks(campaign["id"]))
         raise SystemExit(0)
     if args.command == "reconcile":
+        if coordinator.hack:
+            coordinator.hack.reconcile()
         coordinator.refresh_vault()
         for repository, issue_number, result in coordinator.reconcile():
             item = f"{repository}#{issue_number}" if issue_number else repository

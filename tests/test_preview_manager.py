@@ -5,6 +5,9 @@ import socket
 import subprocess
 from types import SimpleNamespace
 
+import pytest
+
+from symphony.ideas_contract import parse_runtime
 from symphony.preview_manager import ManagedPreview, PreviewManager, PreviewManagerError
 from symphony.preview_queue import PreviewQueue
 
@@ -196,6 +199,44 @@ def test_preview_manager_restarts_a_crashed_last_good_process(tmp_path):
         assert stopped is not None and stopped.state == "stopped"
         assert stopped.active_commit is None
         assert "solo/idea" not in manager._active
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("recovery", ["restore", "restart"])
+def test_preview_manager_stops_unhealthy_live_process_after_recovery_failure(tmp_path, monkeypatch, recovery):
+    root = tmp_path / "preview"
+    queue = PreviewQueue(root, tmp_path / "workspaces")
+    queue.publish_allowlist(("solo/idea",))
+    manager = FakePreviewManager(root)
+    commit = "a" * 40
+    release = manager._release_dir("solo/idea", commit)
+    (release / ".symphony").mkdir(parents=True)
+    (release / ".symphony" / "idea.toml").write_text(_runtime(14318))
+    runtime = parse_runtime(_runtime(14318).encode())
+    previous = manager._start_release("solo/idea", commit, release, runtime)
+    status = manager._write_status(
+        "solo/idea", desired_commit=commit, active_commit=commit, last_good_commit=commit,
+        state="healthy", runtime=runtime, detail="healthy",
+    )
+    manager._write_project_state(status)
+    failed_processes = []
+
+    def unhealthy(preview):
+        failed_processes.append(preview.process)
+        raise PreviewManagerError("health timed out while the process remained alive")
+
+    monkeypatch.setattr(manager, "_health", unhealthy)
+    try:
+        if recovery == "restore":
+            manager.close()
+            manager.restore()
+        else:
+            previous.process.terminate()
+            manager._restart_dead()
+        assert failed_processes and failed_processes[0].poll() is not None
+        assert "solo/idea" not in manager._active
+        assert queue.status("solo/idea").state == "failed"
     finally:
         manager.close()
 

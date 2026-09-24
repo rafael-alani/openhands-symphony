@@ -4,8 +4,11 @@ import asyncio
 import hashlib
 import hmac
 import json
+import os
+import signal
 import socket
 import subprocess
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -18,15 +21,22 @@ from conftest import FakeGitHub, issue, make_config
 from symphony.config import IdeasConfig
 from symphony.coordinator import Coordinator
 from symphony.execution import ProviderSlots
-from symphony.ideas_contract import IdeaContractError, git_blob_hash, parse_runtime, preview_argv, validate_spec
+from symphony.ideas_contract import (
+    IdeaContractError,
+    IdeaRuntime,
+    git_blob_hash,
+    parse_runtime,
+    preview_argv,
+    validate_spec,
+)
 from symphony.ideas_coordinator import IdeasCoordinator
-from symphony.ideas_preview import IdeaPreview, PreviewEvidence
+from symphony.ideas_preview import IdeaPreview, PreviewError, PreviewEvidence
 from symphony.models import IdeaRunState, IdeaSnapshot, ProviderOutcome
 from symphony.preview_queue import PreviewQueue
 from symphony.providers.fake import FakeProvider
 from symphony.store import Store
 from symphony.webhook import create_app
-from symphony.workspace import NonFastForwardError, WorkspaceManager
+from symphony.workspace import NonFastForwardError, WorkspaceError, WorkspaceManager
 
 SPEC = b"---\nsymphony: idea\nrepo: solo/idea\n---\n\n# Test idea\n\n## First wish\n\nBuild the smallest thing.\n"
 RUNTIME = (
@@ -83,6 +93,44 @@ def test_prepublication_preview_does_not_probe_the_stable_last_good_port(tmp_pat
         if old_preview.poll() is None:
             old_preview.terminate()
         old_preview.wait(timeout=5)
+
+
+def test_prepublication_preview_handles_noisy_startup_and_stops_server_children(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "import http.server, os, signal, time\n"
+        "from pathlib import Path\n"
+        "print('startup output ' * 100000, flush=True)\n"
+        "if os.fork() == 0:\n"
+        "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "    Path('child.pid').write_text(str(os.getpid()))\n"
+        "    server = http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), "
+        "http.server.SimpleHTTPRequestHandler)\n"
+        "    server.serve_forever()\n"
+        "else:\n"
+        "    time.sleep(60)\n"
+    )
+    runtime = IdeaRuntime("codex", (sys.executable, "app.py"), 4317, "/", 5)
+    try:
+        evidence = IdeaPreview("", tmp_path / "state").boot_and_capture(tmp_path, runtime, ())
+        assert "startup output" in evidence.log
+        assert len(evidence.log) <= 4000
+        port = urlsplit(evidence.health_url).port
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.settimeout(0.1)
+                if probe.connect_ex(("127.0.0.1", port)) != 0:
+                    break
+            time.sleep(0.05)
+        else:
+            pytest.fail("candidate child server survived preview cleanup")
+    finally:
+        child_pid = tmp_path / "child.pid"
+        if child_pid.exists():
+            try:
+                os.kill(int(child_pid.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def _run(command: list[str], cwd: Path | None = None) -> str:
@@ -433,6 +481,35 @@ def test_non_fast_forward_race_rebases_once_and_keeps_implementation(tmp_path):
     assert project.last_good_preview_commit is None
 
 
+def test_non_fast_forward_race_rechecks_rebased_code_before_publication(tmp_path):
+    remote, _ = _idea_remote(tmp_path)
+    config, store, coordinator, workspaces = _coordinator(
+        tmp_path, FakeProvider("codex", write_files={"implemented.txt": "useful\n"}), remote
+    )
+    coordinator.observe_repository("solo/idea")
+    checked = []
+
+    class DetectBrokenRebase(FakePreview):
+        def boot_and_capture(self, worktree, runtime, affected):
+            checked.append(worktree)
+            if (worktree / "incompatible.txt").exists():
+                raise PreviewError("concurrent change breaks preview startup")
+            return super().boot_and_capture(worktree, runtime, affected)
+
+    coordinator.preview = DetectBrokenRebase()
+    workspaces.race = lambda: _edit_remote(
+        tmp_path, remote, "incompatible.txt", b"breaks startup\n", "incompatible push"
+    )
+
+    result = coordinator.run_claimed(_claim(store, config))
+
+    assert result.state != IdeaRunState.PUBLISHED
+    assert len(checked) == 2
+    assert workspaces.push_attempts == 1
+    assert LocalIdeasGitHub(remote)._show("main", "implemented.txt") == b""
+    assert LocalIdeasGitHub(remote)._show("main", "incompatible.txt") == b"breaks startup\n"
+
+
 def test_question_publishes_progress_and_next_spec_edit_requeues(tmp_path):
     remote, _ = _idea_remote(tmp_path)
     provider = FakeProvider("codex", ProviderOutcome.NEEDS_GUIDANCE)
@@ -454,3 +531,43 @@ def test_question_publishes_progress_and_next_spec_edit_requeues(tmp_path):
     assert next_run.state == IdeaRunState.QUEUED
     assert next_run.spec_hash != first.spec_hash
     assert store.get_idea_project("solo/idea").latest_completed_spec_hash == first.spec_hash
+
+
+def test_question_publication_checks_worktree_integrity(tmp_path, monkeypatch):
+    remote, _ = _idea_remote(tmp_path)
+    config, store, coordinator, workspaces = _coordinator(
+        tmp_path, FakeProvider("codex", ProviderOutcome.NEEDS_GUIDANCE), remote
+    )
+    coordinator.observe_repository("solo/idea")
+
+    def replaced_metadata(*_args):
+        raise WorkspaceError("worktree .git pointer was replaced by the agent user")
+
+    monkeypatch.setattr(workspaces, "verify_run_integrity", replaced_metadata)
+    result = coordinator.run_claimed(_claim(store, config))
+
+    assert result.state != IdeaRunState.QUESTION
+    assert workspaces.push_attempts == 0
+    assert LocalIdeasGitHub(remote)._show("main", "idea/PROGRESS.md") == b""
+
+
+def test_next_spec_edit_revisits_unresolved_unchanged_wishes(tmp_path):
+    remote, _ = _idea_remote(tmp_path)
+    provider = FakeProvider("codex", ProviderOutcome.NEEDS_GUIDANCE)
+    config, store, coordinator, _ = _coordinator(tmp_path, provider, remote)
+    coordinator.observe_repository("solo/idea")
+    assert coordinator.run_claimed(_claim(store, config)).state == IdeaRunState.QUESTION
+    # The first section's bytes remain identical: guidance can be supplied in
+    # another section, and pending work must still receive fresh results.
+    answered = SPEC + b"## Decisions\nUse option A for every feature.\n"
+    _edit_remote(tmp_path, remote, "idea/SPEC.md", answered, "add decision")
+    coordinator.providers["codex"] = FakeProvider("codex", write_files={"implemented.txt": "option A\n"})
+    coordinator.observe_repository("solo/idea")
+
+    result = coordinator.run_claimed(_claim(store, config))
+
+    assert result.state == IdeaRunState.PUBLISHED
+    progress = LocalIdeasGitHub(remote)._show("main", "idea/PROGRESS.md")
+    assert progress.count(b"> **done**") == 2
+    assert b"> **question**" not in progress
+    assert b"assets/first-wish.png" in progress

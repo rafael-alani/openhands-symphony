@@ -52,6 +52,18 @@ def affected_sections(previous_spec: bytes | None, current_spec: bytes) -> tuple
     if previous_spec is None:
         return current
     previous = sections(previous_spec)
+    # The brief applies to every wish. Structural edits can change the scope
+    # or ordering of the whole application, including when only a removed
+    # section describes the change. They still need fresh results/evidence.
+    previous_header = HEADER_PATTERN.search(previous_spec)
+    current_header = HEADER_PATTERN.search(current_spec)
+    previous_brief = previous_spec[: previous_header.start()] if previous_header else previous_spec
+    current_brief = current_spec[: current_header.start()] if current_header else current_spec
+    previous_order = [(section.title, section.slug) for section in previous]
+    current_order = [(section.title, section.slug) for section in current]
+    surviving_order = [key for key in current_order if key in previous_order]
+    if previous_brief != current_brief or surviving_order != previous_order:
+        return current
     previous_bodies = {(section.title, section.slug): section.body for section in previous}
     return tuple(
         section

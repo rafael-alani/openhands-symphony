@@ -16,6 +16,20 @@ from symphony.doctor import (
 )
 
 
+def test_allowlist_diagnostic_accepts_vault_only_and_ideas_only(tmp_path):
+    from dataclasses import replace
+
+    from conftest import make_config
+
+    from symphony.config import IdeasConfig, VaultConfig
+
+    config = make_config(tmp_path, repositories=())
+    assert not doctor._allowlist_check(config).ok
+    assert doctor._allowlist_check(replace(config, vault=VaultConfig(enabled=True, owner="solo"))).ok
+    assert doctor._allowlist_check(replace(config, ideas=IdeasConfig(repositories=("solo/idea",)))).ok
+    assert not doctor._allowlist_check(replace(config, ideas=IdeasConfig(repositories=("CHANGE_ME/CHANGE_ME",)))).ok
+
+
 def test_automation_readiness_requires_a_working_database(tmp_path, monkeypatch):
     key = tmp_path / "canvas.env"
     key.write_text("LOCAL_BACKEND_API_KEY=test-key\n")

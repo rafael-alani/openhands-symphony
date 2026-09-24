@@ -137,3 +137,37 @@ def test_invalid_vault_configuration_rejected(tmp_path, fragment):
     path.write_text(path.read_text() + '\n[vault]\nenabled = true\n' + owner + fragment + '\n')
     with pytest.raises(ValueError):
         load_config(path)
+
+
+def test_hack_is_opt_in_and_loads_bounded_policy(tmp_path):
+    path = _config(tmp_path / "config.toml")
+    assert not load_config(path).hack.enabled
+    path.write_text(path.read_text() + '''
+[hack]
+enabled = true
+repositories = ["solo/project"]
+max_parallel = 6
+max_tasks = 40
+publish_ideas = true
+''')
+    config = load_config(path)
+    assert config.hack.repositories == ("solo/project",)
+    assert config.hack.max_parallel == 6
+    assert config.hack.max_tasks == 40
+    assert config.hack.publish_ideas
+
+
+@pytest.mark.parametrize("fragment,reason", [
+    ('max_parallel = 7', "max_parallel"),
+    ('reserve_slots = 0', "reserve"),
+    ('max_tasks = 0', "max_tasks"),
+    ('repositories = ["../escape"]', "invalid hack"),
+    ('enabled = true', "explicitly allowlist"),
+    ('enabled = true\nrepositories = ["solo/project"]\nprovider = "missing"', "enabled provider"),
+    ('enabled = true\nrepositories = ["solo/project"]\nreserve_slots = 2', "must exceed"),
+])
+def test_hack_config_rejects_unbounded_or_unroutable_policy(tmp_path, fragment, reason):
+    path = _config(tmp_path / "config.toml")
+    path.write_text(path.read_text() + "\n[hack]\n" + fragment + "\n")
+    with pytest.raises(ValueError, match=reason):
+        load_config(path)

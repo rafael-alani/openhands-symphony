@@ -315,6 +315,8 @@ class VaultBridge:
             detail = redact(f"vault reconciliation failed: {type(exc).__name__}: {exc}", 2000)
             self.last_errors = [detail]
             for project in self.store.vault_projects():
+                if self.store.hack_active(project["repository"]):
+                    continue
                 self.store.request_vault_mode(project["repository"], "paused", status="error", error=detail)
                 self.store.activate_vault_mode(project["repository"])
             return self.last_errors
@@ -328,6 +330,8 @@ class VaultBridge:
         notes: dict[str, list[Note]] = {}
         if not root.is_dir() or not root.resolve().is_relative_to(config.vault.path.resolve()):
             for project in self.store.vault_projects():
+                if self.store.hack_active(project["repository"]):
+                    continue
                 self.store.request_vault_mode(project["repository"], "paused", status="error", error="vault unavailable")
                 self.store.activate_vault_mode(project["repository"])
             return ["vault project directory is unavailable; registered projects paused"]
@@ -362,6 +366,10 @@ class VaultBridge:
                     repository, str(note.path), managed=note.repository is None,
                     port_start=config.vault.port_start, port_end=config.vault.port_end,
                 )
+                if self.store.hack_active(repository):
+                    # The campaign owns publication until it closes. Keep the
+                    # home mode intact; note edits are picked up afterwards.
+                    continue
                 # Block queued work while a note is changing or a mode transition is pending.
                 self.store.request_vault_mode(repository, note.mode)
                 snapshot = compile_project(note, repository, config.vault.path) if note.mode == "idea" else None
@@ -411,10 +419,14 @@ class VaultBridge:
             except Exception as exc:
                 detail = redact(str(exc), 1500)
                 self.last_errors.append(f"{repository}: {detail}")
+                if self.store.hack_active(repository):
+                    continue
                 self.store.request_vault_mode(repository, "paused", status="error", error=detail)
                 self.store.activate_vault_mode(repository)
         for project in self.store.vault_projects():
             if project["repository"] not in seen:
+                if self.store.hack_active(project["repository"]):
+                    continue
                 self.store.request_vault_mode(project["repository"], "paused", error="note missing, unmarked, or invalid")
                 self.store.activate_vault_mode(project["repository"])
         lines = ["# Symphony projects", "", "Syncthing carries notes and generated results. Existing repositories and issues are retained.", ""]

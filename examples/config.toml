@@ -40,6 +40,24 @@ quiet_seconds = 30
 port_start = 10000
 port_end = 10999
 
+# Campaigns remain opt-in, including for automatically created vault projects.
+# Add the actual private repo here, enable, and raise global/provider capacity
+# for parallel lanes. Normal GitHub work always retains reserve_slots slots.
+[hack]
+enabled = false
+repositories = []
+provider = "codex"
+max_parallel = 4
+max_tasks = 100
+reserve_slots = 1
+task_timeout_seconds = 1800
+fast_gate_timeout_seconds = 300
+polish_seconds = 300
+milestone_every = 5
+# false produces one final draft PR for either home mode; true permits a
+# guarded final push only when the repository's home mode is Ideas.
+publish_ideas = false
+
 [scheduler]
 poll_seconds = 30
 reconcile_seconds = 300

@@ -140,7 +140,12 @@ runtime, configuration, adapter, and an integrity-checked SQLite copy under
 `/root/symphony-settings-rollback-<timestamp>`, installs and byte-checks the wheel,
 sets extra-high/normal defaults, verifies the authenticated adapter without
 model turns, records the release checkout for future `agentctl update` runs,
-and checks the running defaults endpoint. On failure it restores
+and checks the running defaults endpoint. Installed scripts have their executable
+permissions restored explicitly. Before restart, a second probe launches the
+configured installed Codex command as the worker and verifies the same settings
+without model prompts; enabled provider executables must also pass worker access
+checks. See [launch-permission regression and tests](update-launch-permissions.md).
+On failure it restores
 the previous software and configuration before restarting the prior services.
 
 The rollback directory remains root-only. This task-specific local copy is not

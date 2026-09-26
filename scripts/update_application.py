@@ -24,6 +24,7 @@ SOURCE_PATH = Path("/etc/openhands-symphony/source-path")
 SERVICE = "openhands-symphony.service"
 TIMER = "openhands-symphony-reconcile.timer"
 WHEEL = "openhands_symphony-0.1.0-py3-none-any.whl"
+ROLLBACK_ROOT = Path("/root")
 
 
 def run(*args, **kwargs):
@@ -77,7 +78,42 @@ def sync(source: Path, target: Path) -> None:
         raise ValueError("unexpected software sync target")
     excludes = ["--exclude=.git", "--exclude=.venv", "--exclude=dist", "--exclude=.pytest_cache",
                 "--exclude=.ruff_cache", "--exclude=__pycache__"] if target == INSTALL else []
-    run("rsync", "-a", "--delete", *excludes, str(source) + "/", str(target) + "/")
+    # Check bytes as well as modes: replacements and rollback can have equal
+    # sizes and timestamps, especially within the same filesystem clock tick.
+    run("rsync", "-a", "--checksum", "--delete", *excludes, str(source) + "/", str(target) + "/")
+
+
+def install_source(source: Path) -> None:
+    sync(source, INSTALL)
+    run("chmod", "-R", "a+rX", str(INSTALL))
+    # Match install.sh even when checkout/archive permissions have lost +x.
+    # chmod a+rX alone does not make a non-executable regular file executable.
+    for script in sorted((INSTALL / "scripts").iterdir()):
+        if script.suffix not in {".sh", ".py"}:
+            continue
+        if script.is_symlink() or not script.is_file():
+            raise ValueError(f"expected a regular installed script: {script.name}")
+        script.chmod(0o755)
+
+
+def verify_installed_launch(configured: dict) -> str:
+    providers = configured.get("providers", {})
+    for name, provider in providers.items():
+        if not provider.get("enabled", False):
+            continue
+        command = provider.get("acp_command", [])
+        if not command or not Path(command[0]).is_absolute():
+            raise ValueError(f"{name} must configure an absolute ACP executable")
+        # Root's own access check cannot establish what the worker can launch.
+        run("runuser", "-u", "openhands-agent", "--", "test", "-x", command[0])
+    codex = providers.get("codex", {})
+    if not codex.get("enabled", False):
+        return ""
+    probe = run("runuser", "-u", "openhands-agent", "--", "env", "HOME=/var/lib/openhands-agent",
+                "python3", str(INSTALL / "scripts/probe_agent_settings.py"),
+                "--command", *codex["acp_command"], stdout=subprocess.PIPE,
+                cwd="/var/lib/openhands-agent")
+    return probe.stdout
 
 
 def main() -> None:
@@ -130,7 +166,7 @@ def main() -> None:
                     "python3", str(probe_root / "probe_agent_settings.py"), stdout=subprocess.PIPE,
                     cwd="/var/lib/openhands-agent")
         print(probe.stdout, end="")
-    rollback = Path("/root") / ("symphony-settings-rollback-" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ"))
+    rollback = ROLLBACK_ROOT / ("symphony-settings-rollback-" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ"))
     rollback.mkdir(mode=0o700)
     was_active, timer_active = active(SERVICE), active(TIMER)
     if active("openhands-symphony-reconcile.service"):
@@ -155,9 +191,7 @@ def main() -> None:
                 original.backup(saved)
                 assert saved.execute("PRAGMA quick_check").fetchone() == ("ok",)
         changed = True
-        sync(source, INSTALL)
-        # Software must stay readable under the service account's filesystem boundary.
-        run("chmod", "-R", "a+rX", str(INSTALL))
+        install_source(source)
         run("uv", "pip", "install", "--python", str(RUNTIME / "bin/python"), "--no-deps", "--reinstall",
             str(source / "dist" / WHEEL))
         run("chmod", "-R", "a+rX", str(RUNTIME))
@@ -173,6 +207,11 @@ def main() -> None:
         SOURCE_PATH.chmod(0o640)
         os.chown(SOURCE_PATH, 0, CONFIG.stat().st_gid)
         patch(ACP.parent.parent)
+        # Exercise the configured installed executable after replacement, under
+        # the worker identity. A failure enters the normal software rollback.
+        launch_probe = verify_installed_launch(configured)
+        (rollback / "installed-launch-probe.jsonl").write_text(launch_probe)
+        print(launch_probe, end="")
         run(str(RUNTIME / "bin/agentctl"), "--config", str(CONFIG), "settings")
         (INSTALL / "DEPLOYED_COMMIT").write_text(revision + "\n")
         (INSTALL / "DEPLOYED_COMMIT").chmod(0o644)

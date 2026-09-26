@@ -50,3 +50,34 @@ Before staging, the local suite passed all 283 tests; Ruff and whitespace checks
 passed. Pre-update hashes of the live Immich folder note, linked brief, and
 Waypoint block were captured read-only for the post-approval comparison. The
 release makes no manual change to those notes or to any run state.
+
+## Production acceptance, 2026-09-26
+
+The server's isolated Linux suite passed all 283 tests and its deployment
+compatibility preflight passed. After the user's sudo approval, read-only
+verification at 10:40–10:42 UTC confirmed installed revision
+`ac8563ce16266dd8732759fb7185454dda677138`, with all 40 installed Python
+source files matching the staged release. Symphony, Canvas, and Syncthing were
+active; Symphony and the published app health endpoints returned `status: ok`.
+Codex defaults remained `xhigh` and `normal`.
+
+Normal reconciliation completed at 10:40:59 UTC and generated the annotations
+without a manual reconcile, note edit, state edit, or retry. The original Immich
+folder note contains Completed and Result links on its General Idea row, plus
+Repository, Current status, and Latest result links in its summary. Every local
+target and task heading resolves. GitHub confirmed the immutable result report
+exists at publication `3b192490154b7daff80ba220797477f5ef219e42`.
+
+Programmatic removal of verified generated spans reconstructs the original
+228-byte source note exactly (SHA-256
+`884df09e3074eb346305cb60db8b2f86ccf16ebf6105d99fff1cddf7f53e4936`). The
+668-byte linked brief and Waypoint block also match their pre-update hashes.
+The annotation checksums and marker pairing are valid.
+
+The per-repository status records the existing published run
+`c25da71e-7637-4040-bddf-45002f7c3b4d`, last updated at 07:56:47 UTC, with
+preview state healthy. The accepted specification remains blob
+`c48804d07c48a0585d751c048b3c7c0a911d0e33`, the repository head remains
+`bd63dce273c114d06afe884026fdd7a550e31b59`, and no new provider conversation
+or prompt was recorded after this deployment. No new implementation or
+status-only Git commit was generated for the project.

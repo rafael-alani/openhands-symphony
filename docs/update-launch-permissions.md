@@ -59,3 +59,16 @@ This release does not reset exhausted task attempts or force reconciliation.
 The failed Immich task therefore remains failed until an explicit supported
 retry is implemented or the workflow receives a new specification. No vault
 notes, task results, or application data are edited by this update.
+
+## Release validation, 2026-09-26
+
+Release `ef6f8b1d5a67d3efeac87cd595e7f242d1278931` is published on
+`codex/fix-update-launch-permissions` and staged with its matching wheel at
+`/home/afa/symphony-launch-ef6f8b1` on VM101. All 296 tests passed locally
+(28.68 seconds) and on Linux (11.06 seconds), including 13 new regression
+cases. Ruff and whitespace checks passed. The Linux updater's read-only
+compatibility preflight passed against installed release `ac8563c`.
+
+Installation and the real worker's post-install authenticated launch probe
+remain pending the user's SSH/sudo approval. Production files and failed task
+state have not been repaired or reset while staging this release.

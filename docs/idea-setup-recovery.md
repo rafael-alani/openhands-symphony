@@ -58,3 +58,27 @@ spec includes `General Idea.md`, and its checklist completion is retained. Do no
 restart a completed run or introduce another live project solely to demonstrate
 the regression. Linux preflight and post-update production checks should be
 recorded separately; they are not implied by the local test results above.
+
+## Completed deployment checks, 2026-09-26
+
+The staged release passed all 260 tests on VM101, with results retained at
+`/home/afa/symphony-idea-recovery-d51a25f-linux-tests.xml`. The updater's
+nonprivileged compatibility preflight passed before the user installed it.
+
+After the user reported the update complete, read-only checks at
+10:09–10:10 UTC confirmed:
+
+- Installed revision: `d51a25f1c91b3831cf0e0185b46e7b36ce7edc2a`.
+- All 38 installed Symphony Python sources byte-match the tested release.
+- Symphony restarted at 10:08:49 UTC; Symphony, Canvas, and Syncthing are active.
+- `/healthz` and the published preview's `127.0.0.1:10001/health` return
+  `{"status":"ok"}`. No post-update Symphony warnings were logged at this check.
+- `/agent-settings` reports Codex `xhigh` reasoning and `normal` speed.
+- The automatically generated vault status was refreshed at 10:08:54 UTC,
+  after restart, and still reports the Immich project ready and published.
+- The accepted specification includes the full `General Idea.md`; the source
+  note retains its completed checkbox. The publication commit is unchanged.
+
+No manual reconciliation, model run, retry, note edit, or database operation was
+used for these checks. Since publication predated this update, the repaired
+retry path is established by regression tests, not a new production recovery.

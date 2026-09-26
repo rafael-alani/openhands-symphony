@@ -24,9 +24,13 @@ from .ideas_contract import git_blob_hash
 from .ideas_github import GhIdeasBackend
 from .intake import validate_repository_name
 from .labels import LABEL_CONTRACT
+from .models import IdeaRun, IdeaSnapshot
 from .store import Store
 from .validation import redact
+from .vault_history import append_history, run_history
 from .vault_project import ProjectSnapshot, VaultError, compile_project
+from .vault_retry import TERMINAL, observe_checkboxes, pending_retry, remember_checkboxes, retry_sources, task_runs
+from .vault_retry import consume_retry as create_checkbox_retry
 from .vault_status import render_input_error, render_status
 
 MODES = {"idea", "github", "paused"}
@@ -359,6 +363,10 @@ class VaultBridge:
             self.base_config.ideas.progress_path,
             idea_project.preview_state if idea_project else "Not published",
             has_progress=has_progress,
+            retrying=set((pending_retry(self.store, repository) or {}).get("sources", {})),
+            history=run_history(self.store, repository, self.base_config.ideas.progress_path),
+            task_runs=task_runs(self.store, snapshot, runs),
+            can_retry=self.base_config.vault.manage_checkboxes,
         )
         if note.mode == "idea":
             proposed = replace(note, raw=updated, body=updated.decode("utf-8-sig")[note.header_end:])
@@ -424,20 +432,33 @@ class VaultBridge:
                     note = attach_repository(note, repository, config.service.state_dir / "vault-note-originals")
                     if note.mode == "idea":
                         snapshot = compile_project(note, repository, config.vault.path)
+                        runs = [run for run in self.store.list_idea_runs() if run.repository == repository]
+                        latest = runs[-1] if runs else None
+                        per_task = task_runs(self.store, snapshot, runs)
+                        retrying = observe_checkboxes(self.store, repository, snapshot, latest) if config.vault.manage_checkboxes else set()
                         values = self.store.observe_vault_checklist(repository, [
                             (item.key, item.content_hash, item.checked) for item in snapshot.files
                         ])
                         # Recover completion even if the service stopped immediately after Git publication.
                         completed = self.store.last_completed_idea_run(repository)
-                        if completed and completed.state == "published" and completed.spec_content == snapshot.spec:
+                        if completed and latest and completed.id == latest.id and completed.state == "published" and completed.spec_content == snapshot.spec:
                             validations = [v for v in self.store.idea_validations(completed.id) if v["attempt"] == completed.attempt]
                             if all(v["exit_code"] == 0 and not v["timed_out"] for v in validations):
+                                selected = retry_sources(self.store, completed.id)
+                                finished = {item.key: item.content_hash for item in snapshot.files
+                                            if item.key not in retrying and (not selected or item.key in selected)}
                                 self.store.complete_vault_checklist(repository, [
-                                    (item.key, item.content_hash) for item in snapshot.files
+                                    (key, digest) for key, digest in finished.items()
                                 ], completed.published_commit or "")
-                                values = {item.key: True for item in snapshot.files}
+                                values.update({key: True for key in finished})
                         snapshot.verify()
                         if config.vault.manage_checkboxes and snapshot.files:
+                            # Checkbox is an attempt control; the status label and
+                            # stored completion remain the authority for success.
+                            for key, task_run in per_task.items():
+                                if task_run.state in TERMINAL:
+                                    values[key] = True
+                            values.update({key: False for key in retrying})
                             updated = snapshot.checkbox_bytes(values)
                             if updated != note.raw:
                                 before = snapshot.spec
@@ -445,6 +466,7 @@ class VaultBridge:
                                 snapshot = compile_project(note, repository, config.vault.path)
                                 if snapshot.spec != before:
                                     raise VaultError("checklist file changed while updating status; waiting for the next pass")
+                            remember_checkboxes(self.store, repository, snapshot)
                         self.backend.sync_spec(repository, snapshot.spec, config.vault.provider,
                                                project["port"], config.ideas.spec_path)
                         snapshot.verify()
@@ -454,7 +476,10 @@ class VaultBridge:
                         raise VaultError("note changed during synchronization; waiting for the next pass")
                 self.store.activate_vault_mode(repository)
                 if note.mode != "paused":
+                    history = run_history(self.store, repository, config.ideas.progress_path)
                     for relative, content in self.backend.progress(repository, config.ideas.progress_path).items():
+                        if relative == "PROGRESS.md":
+                            content = append_history(content, history)
                         self._safe_output(Path(repository.replace("/", "--")) / relative, content)
                 self._write_note_status(note, snapshot, repository)
             except Exception as exc:
@@ -474,13 +499,15 @@ class VaultBridge:
                     sources = [row["source"] for row in connection.execute(
                         "SELECT source FROM vault_checklist WHERE repository=? ORDER BY source", (repo,),
                     )]
-                self._safe_output(Path(repo.replace("/", "--")) / "STATUS.md", render_input_error(project, sources))
+                self._safe_output(Path(repo.replace("/", "--")) / "STATUS.md",
+                                  append_history(render_input_error(project, sources),
+                                                 run_history(self.store, repo, config.ideas.progress_path)))
             lines.append(f"- [{repo}](https://github.com/{repo}): {project['mode']} → {project['desired_mode']} ({project['status']}); preview port {project['port']}")
             lines.append(f"  [Progress]({repo.replace('/', '--')}/PROGRESS.md)")
             runs = [run for run in self.store.list_idea_runs() if run.repository == repo]
             if runs:
                 run = runs[-1]
-                lines.append(f"  Latest run: {run.state}, {run.phase}. {run.question}")
+                lines.append(f"  Latest run: {run.state}, {run.phase}.")
             if project["error"]:
                 lines.append(f"  {project['error']}")
         lines.extend(["", *self.last_errors])
@@ -495,7 +522,40 @@ class VaultBridge:
         if note is None or compile_project(note, repository, self.base_config.vault.path).spec != spec:
             raise VaultError("source note or checklist file changed or disappeared before publication")
 
-    def checklist_context(self, repository: str, spec: bytes) -> str:
+    def guard_retry(self, repository: str, spec: bytes) -> None:
+        """Validate the current user command again immediately before intake."""
+        request = pending_retry(self.store, repository)
+        if not request:
+            return
+        project = next(p for p in self.store.vault_projects() if p["repository"] == repository)
+        note = read_note(Path(project["note_path"]))
+        if note is None or note.mode != "idea":
+            raise VaultError("retry is waiting for an active project note")
+        snapshot = compile_project(note, repository, self.base_config.vault.path)
+        if snapshot.spec != spec or not snapshot.settled(self.base_config.vault.quiet_seconds, time.time()):
+            raise VaultError("retry is waiting for the current project input to settle")
+        files = {item.key: item for item in snapshot.files}
+        if any(key not in files or files[key].checked or files[key].content_hash != digest
+               for key, digest in request["sources"].items()):
+            raise VaultError("retry checkbox changed; waiting for the next reconciliation")
+        snapshot.verify()
+
+    def consume_retry(self, snapshot: IdeaSnapshot, provider: str) -> IdeaRun | None:
+        if not pending_retry(self.store, snapshot.repository):
+            return None
+        owner = self.owner + "-retry"
+        # Serialize command acceptance with checkbox projection, including a
+        # second bridge process (the reconcile timer). Otherwise an old view of
+        # the completed run could recheck a task just accepted by the scheduler.
+        if not self.store.acquire_operation_lock("vault-intake", owner, 3600):
+            return None
+        try:
+            self.guard_retry(snapshot.repository, snapshot.spec_content)
+            return create_checkbox_retry(self.store, snapshot, provider)
+        finally:
+            self.store.release_operation_lock("vault-intake", owner)
+
+    def checklist_context(self, repository: str, spec: bytes, run_id: str | None = None) -> str:
         project = next((p for p in self.store.vault_projects() if p["repository"] == repository), None)
         if project is None:
             return ""
@@ -520,6 +580,14 @@ class VaultBridge:
                  "Removing a checklist row stops tracking that file; it does not by itself request deleting a feature. "
                  "If requirements still conflict, return needs-guidance with one focused question before publication. "
                  "Do not edit checkboxes or source notes yourself; the wrapper manages progress."]
-        lines.extend(f"- [{'x' if statuses[item.key] else ' '}] {item.key}" for item in snapshot.files)
+        selected = retry_sources(self.store, run_id) if run_id else set()
+        if selected:
+            lines.append("This is an explicit checkbox retry. Only selected tasks below are in scope; "
+                         "other unfinished tasks are deferred context, not work requested by this retry.")
+        for item in snapshot.files:
+            if selected and item.key not in selected and not statuses[item.key]:
+                lines.append(f"- Deferred (not selected): {item.key}")
+            else:
+                lines.append(f"- [{'x' if statuses[item.key] else ' '}] {item.key}")
         lines.append("</project-checklist>")
         return "\n".join(lines)

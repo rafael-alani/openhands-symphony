@@ -346,14 +346,36 @@ def test_note_to_scheduler_to_git_publication_and_back_to_vault(tmp_path, folder
     assert "symphony-task:" not in provider.starts[0][1]
     assert "symphony-status:" not in provider.starts[0][1]
     if folder_checklist:
+        original_run = store.list_idea_runs()[-1]
+        original_events = store.idea_events(original_run.id)
+        original_spec = github.get_snapshot("solo/idea", "idea/SPEC.md", "idea/PROGRESS.md").spec_content
+        note.write_text(note.read_text().replace("- [x] [[Greeting]]", "- [ ] [[Greeting]]"))
         scheduler = Scheduler(config, store, coordinator, ideas)
         try:
-            assert scheduler.tick(reconcile=True) == 0  # ticking a box must not create another run
+            assert scheduler.tick(reconcile=True) == 1
+        finally:
+            scheduler.stop(wait=True)
+        retry = store.list_idea_runs()[-1]
+        assert retry.id != original_run.id and retry.state == IdeaRunState.PUBLISHED
+        assert retry.spec_content == original_spec
+        assert store.get_idea_run_by_id(original_run.id) == original_run
+        assert store.idea_events(original_run.id) == original_events
+        assert "- [ ] Greeting.md" in provider.starts[1][1]
+        assert "explicit checkbox retry" in provider.starts[1][1]
+        assert "## Run history" not in provider.starts[1][1]
+        bridge.reconcile()
+        assert "- [x] [[Greeting]]" in note.read_text()
+        assert f"### Run {retry.id}" in progress.read_text()
+        assert f"### Run {original_run.id}" in progress.read_text()
+        assert "## Run history" not in github.get_snapshot("solo/idea", "idea/SPEC.md", "idea/PROGRESS.md").previous_progress.decode()
+        scheduler = Scheduler(config, store, coordinator, ideas)
+        try:
+            assert scheduler.tick(reconcile=True) == 0  # automatic completion must not create another run
             child.write_text("Show a friendly greeting and a reset button.\n")
             assert scheduler.tick(reconcile=True) == 1
         finally:
             scheduler.stop(wait=True)
-        assert len(provider.starts) == 2
+        assert len(provider.starts) == 3
         assert "- [ ] [[Greeting]]" in note.read_text()
         assert store.list_idea_runs()[-1].state == IdeaRunState.PUBLISHED
         bridge.reconcile()
@@ -366,7 +388,7 @@ def test_note_to_scheduler_to_git_publication_and_back_to_vault(tmp_path, folder
             assert scheduler.tick(reconcile=True) == 1
         finally:
             scheduler.stop(wait=True)
-        assert len(provider.starts) == 3
+        assert len(provider.starts) == 4
         assert store.list_idea_runs()[-1].state == IdeaRunState.PUBLISHED
         bridge.reconcile()
         assert "- [x] [[Greeting]]" in note.read_text()

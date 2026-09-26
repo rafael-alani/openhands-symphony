@@ -99,7 +99,7 @@ def test_partial_validation_does_not_claim_completed_task(tmp_path):
     store.transition_idea_run(run.id, IdeaRunState.PUBLISHED, published_commit="c" * 40)
     bridge.reconcile()
     assert "Partial — validation needs attention" in note.read_text()
-    assert "- [ ] [[Feature]]" in note.read_text()
+    assert "- [x] [[Feature]]" in note.read_text()
     assert "[Completed]" not in note.read_text()
 
 

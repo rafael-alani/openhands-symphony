@@ -144,17 +144,17 @@ outside Waypoint; the next settled scan accepts the project automatically.
 
 Editing the brief, a checklist row's instructions, or a listed subfile creates a
 new combined specification after all those files settle. Reordering a Waypoint
-index, changing its links, and ticking status boxes do not trigger a new build.
+index, changing its links, and automatic status ticks do not trigger a new build.
+Explicitly unchecking a previously checked task requests a retry as described below.
 Changes or Syncthing conflicts in listed files also prevent an older run from
 publishing stale work. A maximum of 100 subfiles and 2 MB of total input applies.
 
-With `manage_checkboxes = true` (default), Symphony ticks listed files after a
-published run passes setup, configured validation, and its preview checks. It
-reopens an affected box when the file or its row instructions change. A failed,
-question, or partially validated run does not tick pending work. Checking a box
-means that version was processed successfully, not that every behavior has an
-independent feature test. Initially checked entries are taken as your existing
-completion notes; the worker receives them as context. Source prose, other
+With `manage_checkboxes = true` (default), Symphony ticks a task when its attempt
+finishes. **Completed**, **Failed**, **Needs guidance**, or **Partial** beside the
+box is the outcome; a checkmark alone does not mean success. Completion is still
+recorded only after publication and passing checks. Symphony reopens an affected
+box when its file or row instructions change. Initially checked entries are taken
+as your existing completion notes; the worker receives them as context. Source prose, other
 checkboxes, formatting, and the Waypoint index remain yours. Original bytes are
 retained before each wrapper edit, and concurrent writes defer the update.
 
@@ -162,7 +162,12 @@ Each tracked todo also gets a generated status link on its original row. A
 completed task links to its immutable published result. The same folder note
 gets a compact Symphony summary linking the repository, current status, and
 latest result. `_symphony/owner--repository/STATUS.md` contains the recorded
-run/preview state and a section for each tracked task. A manually checked item
+run/preview state and a section for each tracked task. Both this file and the
+local `PROGRESS.md` linked as **Latest result** have a **Run history** section
+at the bottom, with headings for each run and its attempts/checks. The history
+retains provider, timestamps, outcomes, messages, retry relationships, and links
+to earlier immutable published results. The project todo list stays compact.
+A manually checked item
 is labelled **Checked**, not claimed as a Symphony publication; changed content
 loses the old completion link until the new version is processed.
 
@@ -181,10 +186,22 @@ damaged generated span. Before each source update the wrapper saves the original
 bytes under `vault-note-originals`; atomic exchange and retained race copies
 protect concurrent edits, including an edit arriving during rollback.
 
-Checkboxes are status, not an approval queue or a retry button. Every listed
-subfile is in scope; write optional future ideas elsewhere. To request a change,
-edit the brief or subfile. With `manage_checkboxes = false`, Symphony still tracks
-content changes but leaves checkbox characters to you. Removing a checklist row
+To retry, uncheck the task in the original project note and let it sync. Symphony
+records that checked-to-unchecked change once, then starts a new run from the
+current repository version. The old run and all its attempts remain intact.
+Several unchecks accepted together form one run; other completed or unselected
+tasks remain context. A request made during active work waits for that run to
+finish. Rechecking before the request is accepted cancels it. Changing or removing
+the corresponding input cancels a stale retry; changed requirements use normal
+intake. A retry that passes with no file changes can retain the exact validated
+commit instead of manufacturing a new commit.
+
+An ordinary unchecked task, automatic ticks, repeated scans, and process restarts
+do not themselves request a retry. The checkbox command is stored separately from
+the specification and generated history is never sent to the model. Every newly
+listed subfile is still in scope; write optional future ideas elsewhere. With
+`manage_checkboxes = false`, Symphony tracks content changes but leaves checkbox
+characters to you and does not accept checkbox retries. Removing a checklist row
 stops tracking that file; explicitly describe any desired feature deletion.
 
 The agent receives the current combined spec, its diff, previous progress,

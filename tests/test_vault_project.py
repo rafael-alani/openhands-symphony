@@ -163,7 +163,7 @@ def test_code_examples_are_not_followed_and_bom_crlf_survive_checkbox_update(tmp
 
 
 @pytest.mark.parametrize("outcome", ["success", "question", "failed", "partial"])
-def test_checkbox_completion_uses_published_run_and_passing_validation(tmp_path, outcome):
+def test_finished_attempt_checkbox_does_not_claim_success_without_passing_validation(tmp_path, outcome):
     bridge, note, _, store, backend = project(tmp_path)
     bridge.reconcile()
     repo = store.vault_projects()[0]["repository"]
@@ -175,7 +175,11 @@ def test_checkbox_completion_uses_published_run_and_passing_validation(tmp_path,
     state = {"question": IdeaRunState.QUESTION, "failed": IdeaRunState.FAILED}.get(outcome, IdeaRunState.PUBLISHED)
     store.transition_idea_run(run.id, state, published_commit="published-commit" if state == IdeaRunState.PUBLISHED else None)
     assert bridge.reconcile() == []
-    assert ("- [x] [[Feature]]" in note.read_text()) == (outcome == "success")
+    assert "- [x] [[Feature]]" in note.read_text()
+    with store.connect() as connection:
+        done = connection.execute("SELECT done FROM vault_checklist WHERE repository=?", (repo,)).fetchone()[0]
+    assert bool(done) == (outcome == "success")
+    assert ("[Completed]" in note.read_text()) == (outcome == "success")
 
 
 def test_manual_checkbox_option_does_not_modify_status_cells(tmp_path):

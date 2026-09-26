@@ -25,6 +25,7 @@ from .providers.base import ProviderAdapter
 from .providers.openhands import OpenHandsProviderError
 from .store import Store, StoreError
 from .validation import redact, run_validation
+from .vault_retry import retry_sources
 from .workspace import NonFastForwardError, WorkspaceError, WorkspaceManager
 
 
@@ -71,7 +72,12 @@ class IdeasCoordinator:
             runtime.settings.overlay(spec_settings(snapshot.spec_content, snapshot.repository)).for_provider(runtime.provider)
         except ValueError as exc:
             raise IdeasIntakeError(str(exc)) from None
-        run, created, superseded = self.store.ensure_idea_run(snapshot, runtime.provider)
+        retry_enabled = self.vault is not None and self.vault.base_config.vault.manage_checkboxes
+        retry = self.vault.consume_retry(snapshot, runtime.provider) if retry_enabled else None
+        if retry:
+            run, created, superseded = retry, True, []
+        else:
+            run, created, superseded = self.store.ensure_idea_run(snapshot, runtime.provider)
         for previous in superseded:
             self._cancel_superseded(previous)
         if not created:
@@ -355,6 +361,12 @@ class IdeasCoordinator:
         else:
             paths = tuple(path for path in all_paths if path != self.config.ideas.spec_path)
         if not paths:
+            # A requested recheck can pass without changing code or its result.
+            # Accept only the exact base that was just validated; never certify
+            # a concurrently advanced repository or an unrecorded agent commit.
+            if retry_sources(self.store, run.id) and live.base_commit == run.base_commit and self.workspaces.head(worktree) == run.base_commit:
+                self.store.record_idea_event(run.id, "retry-unchanged", {"commit": run.base_commit})
+                return run.base_commit
             raise WorkspaceError("the idea run produced no committable progress")
         self.workspaces.commit_run(worktree, f"ideas: implement spec {run.spec_hash[:12]}", paths)
         rebased = False
@@ -456,7 +468,7 @@ class IdeasCoordinator:
                 from .vault import VaultError
 
                 try:
-                    prompt += "\n\n" + self.vault.checklist_context(run.repository, run.spec_content)
+                    prompt += "\n\n" + self.vault.checklist_context(run.repository, run.spec_content, run.id)
                 except (VaultError, OSError) as exc:
                     raise StaleIdeaError(str(exc)) from exc
             with self._provider_slot(run, provider):
@@ -481,6 +493,11 @@ class IdeasCoordinator:
                     question="The implementation modified the human-owned idea spec; nothing was pushed.",
                 )
             affected = affected_sections(previous_spec, run.spec_content)
+            retried = retry_sources(self.store, run.id)
+            if retried:
+                names = {f"File: {key}" for key in retried} | {"Project brief"}
+                affected = tuple(section for section in sections(run.spec_content)
+                                 if section in affected or section.title in names)
             if result.outcome in {ProviderOutcome.NEEDS_GUIDANCE, ProviderOutcome.BLOCKED}:
                 question = result.question_or_reason or result.summary
                 self._write_progress(

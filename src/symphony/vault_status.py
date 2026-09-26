@@ -55,7 +55,9 @@ def render_input_error(project: dict, sources: list[str]) -> bytes:
 
 def render_status(snapshot: ProjectSnapshot, project: dict, run: IdeaRun | None,
                   entries: dict[str, dict], vault: Path, progress_path: str,
-                  preview_state: str, *, has_progress: bool) -> tuple[bytes, bytes]:
+                  preview_state: str, *, has_progress: bool, retrying: set[str] | None = None,
+                  history: str = "", task_runs: dict[str, IdeaRun] | None = None,
+                  can_retry: bool = True) -> tuple[bytes, bytes]:
     """Return annotated source and a per-repository status document, without I/O."""
     note, repository = snapshot.note, project["repository"]
     repo_url = f"https://github.com/{repository}"
@@ -63,6 +65,9 @@ def render_status(snapshot: ProjectSnapshot, project: dict, run: IdeaRun | None,
     status_link = relative_link(note.path, folder / "STATUS.md")
     progress_link = relative_link(note.path, folder / "PROGRESS.md")
     current = project_status(project, run, snapshot.spec)
+    retrying = retrying or set()
+    if retrying and project["mode"] == "idea" and not project["error"]:
+        current = "Retry requested"
     links = f"[Repository]({repo_url}) · [Current status]({status_link})"
     if has_progress:
         links += f" · [Latest result]({progress_link})"
@@ -75,26 +80,29 @@ def render_status(snapshot: ProjectSnapshot, project: dict, run: IdeaRun | None,
     if run:
         lines.extend([f"- Latest run: `{run.id}` — {run.state}, {markdown(run.phase)}",
                       f"- Run updated: {run.updated_at}"])
-        if run.question:
-            lines.append(f"- Run message: {markdown(run.question)}")
     if project["error"]:
         lines.append(f"- Intake message: {markdown(project['error'])}")
     if has_progress:
         lines.append("- [Latest result](PROGRESS.md)")
 
     task_annotations = {}
-    matches = run is not None and run.spec_content == snapshot.spec
     for item in snapshot.files:
+        task_run = (task_runs or {}).get(item.key, run)
+        matches = task_run is not None and task_run.spec_content == snapshot.spec
+        current_task = project_status(project, task_run, snapshot.spec)
         entry = entries.get(item.key, {})
         same_content = entry.get("content_hash") == item.content_hash
         done = same_content and entry.get("done")
         commit = entry.get("completed_commit") if done else None
-        if done:
+        if item.key in retrying:
+            state = "Retry requested"
+            commit = None
+        elif done:
             state = "Completed" if commit else "Checked"
-        elif matches and run.state == IdeaRunState.PUBLISHED:
+        elif matches and task_run.state == IdeaRunState.PUBLISHED:
             state = "Partial — validation needs attention"
         else:
-            state = current if matches or project["mode"] != "idea" or project["error"] else "Pending"
+            state = current_task if matches or project["mode"] != "idea" or project["error"] else "Pending"
         anchor = task_anchor(item.key)
         link = f"{status_link}#{quote(anchor, safe='')}"
         suffix = f" — [{state}]({link})"
@@ -106,10 +114,17 @@ def render_status(snapshot: ProjectSnapshot, project: dict, run: IdeaRun | None,
         lines.extend(["", f"## {anchor}", "", f"**{markdown(item.key)}** — {state}"])
         if result_url:
             lines.append(f"[Published result]({result_url}) · [Commit]({repo_url}/commit/{commit})")
-        elif matches and has_progress and run.state in {IdeaRunState.PUBLISHED, IdeaRunState.QUESTION}:
+        elif matches and has_progress and task_run.state in {IdeaRunState.PUBLISHED, IdeaRunState.QUESTION}:
             lines.append("[Run result](PROGRESS.md)")
         elif done:
             lines.append("Checked in the source checklist; no Symphony publication is recorded for this version.")
+    if snapshot.files and can_retry:
+        lines.extend(["", "## Retrying a task", "",
+                      "A checked box means the attempt finished; the status label says whether it succeeded. "
+                      "Uncheck a task in its original project note to request another try. "
+                      "Previously completed tasks stay as context. An active run finishes before a requested retry starts."])
+    if history:
+        lines.append(history)
 
     # Remove only verified generated spans. All remaining characters, including
     # Waypoint, frontmatter, user text, BOM and newline convention, are retained.

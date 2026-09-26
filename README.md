@@ -41,9 +41,11 @@ Progress and screenshots return under `/obsidian/_symphony/`. No Mac-side
 `ideasync`, manual repository creation, or per-project allowlist edit is needed.
 
 Folder notes work with a brief plus `- [ ] [[Feature note]]` rows or a Markdown
-checkbox table above Waypoint. Symphony includes those subfiles, ticks successful
-work, and reopens a file when its content changes. The generated Waypoint index
-is ignored for intake. Use `agentctl vault-check PATH --vault-root /obsidian`
+checkbox table above Waypoint. Symphony includes those subfiles, checks finished
+attempts with an outcome label, and reopens a file when its content changes.
+Uncheck a task to retry it; earlier attempts stay in the linked reports.
+The generated Waypoint index is ignored for intake.
+Use `agentctl vault-check PATH --vault-root /obsidian`
 to validate project input without creating a repository or running a model.
 
 Change `symphony` to `github` for labeled issue → draft PR development, back to

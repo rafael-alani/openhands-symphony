@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 from pathlib import Path
 
+from ..agent_settings import INHERIT_SETTINGS, AgentSettings
 from ..models import (
     AuthStatus,
     ProviderCapabilities,
@@ -28,6 +29,7 @@ class FakeProvider(ProviderAdapter):
         self.name = name
         self.outcome = outcome
         self.starts: list[tuple[Path, str, str, bool]] = []
+        self.settings: list[AgentSettings] = []
         self.cancels: list[str] = []
         self.resumes: list[tuple[ProviderRun, str | None]] = []
         self.write_files = write_files or {}
@@ -47,7 +49,9 @@ class FakeProvider(ProviderAdapter):
     def quota_or_rate_limit_state(self) -> QuotaState:
         return QuotaState()
 
-    def start(self, workspace: Path, prompt: str, run_id: str, *, read_only: bool = False) -> ProviderRun:
+    def start(self, workspace: Path, prompt: str, run_id: str, *, read_only: bool = False,
+              settings: AgentSettings = INHERIT_SETTINGS) -> ProviderRun:
+        self.settings.append(settings)
         self.starts.append((workspace, prompt, run_id, read_only))
         if not read_only:
             for relative, content in self.write_files.items():

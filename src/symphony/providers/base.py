@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from ..agent_settings import INHERIT_SETTINGS, AgentSettings
 from ..models import AuthStatus, ProviderCapabilities, ProviderResult, ProviderRun, QuotaState
 
 
@@ -23,7 +24,8 @@ class ProviderAdapter(ABC):
     def quota_or_rate_limit_state(self) -> QuotaState: ...
 
     @abstractmethod
-    def start(self, workspace: Path, prompt: str, run_id: str, *, read_only: bool = False) -> ProviderRun: ...
+    def start(self, workspace: Path, prompt: str, run_id: str, *, read_only: bool = False,
+              settings: AgentSettings = INHERIT_SETTINGS) -> ProviderRun: ...
 
     @abstractmethod
     def resume(self, run: ProviderRun, prompt: str | None = None) -> ProviderRun: ...

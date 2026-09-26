@@ -10,6 +10,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from .agent_settings import AgentSettings
 from .config import Config
 from .execution import ProviderSlots
 from .github import GitHubBackend, GitHubError, StaleIssueError
@@ -931,7 +932,9 @@ This is the provider's structured final response. Hidden reasoning and raw tool 
                         + guidance,
                     )
                 else:
-                    run = provider.start(worktree, prompt, job.id)
+                    run = provider.start(worktree, prompt, job.id, settings=self.config.agent_settings(
+                        provider.name, job.repository, AgentSettings.from_labels(job.snapshot.labels),
+                    ))
                 provider_turn_started = True
                 job = self.store.begin_attempt(
                     job.id,
@@ -1293,6 +1296,7 @@ This is the provider's structured final response. Hidden reasoning and raw tool 
                     ),
                     f"{job.id}-review-{repairs}",
                     read_only=True,
+                    settings=self.config.agent_settings(reviewer.name),
                 )
                 job = self.store.update_job(
                     job.id,
@@ -1382,7 +1386,10 @@ This is the provider's structured final response. Hidden reasoning and raw tool 
                 "run relevant tests, and do not use GitHub. Review body:\n\n" + review_body
             )
             with self._provider_slot(job, implementer):
-                repair_run = implementer.start(worktree, repair_prompt, f"{job.id}-repair-{repairs}")
+                repair_run = implementer.start(worktree, repair_prompt, f"{job.id}-repair-{repairs}",
+                    settings=self.config.agent_settings(
+                        implementer.name, job.repository, AgentSettings.from_labels(job.snapshot.labels),
+                    ))
                 job = self.store.update_job(
                     job.id,
                     conversation_id=repair_run.conversation_id,

@@ -166,6 +166,7 @@ npm install --prefix /opt/openhands-acp --omit=dev --no-audit --no-fund \
 npm install --prefix /opt/provider-clis --omit=dev --no-audit --no-fund \
   "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
   "@openai/codex@${CODEX_VERSION}"
+python3 "${INSTALL_DIR}/scripts/patch_codex_acp.py" /opt/openhands-acp/node_modules/@agentclientprotocol/codex-acp
 
 uv venv --clear --python "${PYTHON_VERSION}" /opt/openhands-symphony-tool
 env UV_PROJECT_ENVIRONMENT=/opt/openhands-symphony-tool \

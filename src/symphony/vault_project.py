@@ -174,7 +174,7 @@ def compile_project(note: Note, repository: str, vault: Path) -> ProjectSnapshot
     def demote(text: str) -> str:
         return re.sub(r"(?m)^(#{1,6})[ \t]", r"##\1 ", text)
 
-    parts = [f"---\nsymphony: idea\nrepo: {repository}\n---\n\n## Project brief\n\n{demote(body)}"]
+    parts = [note.spec_header(repository) + f"## Project brief\n\n{demote(body)}"]
     for item in files:
         parts.append(f"## File: {item.key}\n\nChecklist instruction: {item.row}\n\n{demote(item.content)}")
     return ProjectSnapshot(note, ("\n\n".join(parts) + "\n").encode(), tuple(files))

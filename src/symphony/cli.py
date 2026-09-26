@@ -271,6 +271,9 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     auth = subparsers.add_parser("auth")
     auth.add_argument("provider", choices=["claude", "codex", "antigravity", "github"])
+    settings = subparsers.add_parser("settings", help="show effective agent defaults without starting a run")
+    settings.add_argument("--provider", default="codex")
+    settings.add_argument("--repository", default="")
     for name in ("doctor", "start", "stop", "restart", "status", "logs", "update", "reconcile", "labels"):
         subparsers.add_parser(name)
     run = subparsers.add_parser("run")
@@ -300,6 +303,7 @@ def main() -> None:
             validate_spec(snapshot.spec, repository)
             print("Project input is valid (read-only; no repository creation or agent execution).")
             print(f"mode: {note.mode}; repository: {note.repository or 'created automatically on intake'}")
+            print(f"agent overrides: {json.dumps(note.settings.values())} (omitted values inherit defaults)")
             print(f"spec: {git_blob_hash(snapshot.spec)}; checklist files: {len(snapshot.files)}")
             for item in snapshot.files:
                 print(f"[{'x' if item.checked else ' '}] {item.key}")
@@ -310,6 +314,16 @@ def main() -> None:
 
     if args.command == "auth":
         raise SystemExit(_authenticate_provider(args.provider))
+    if args.command == "settings":
+        try:
+            config = load_config(args.config)
+            effective = config.agent_settings(args.provider, args.repository)
+            print(json.dumps({"provider": args.provider, "repository": args.repository or None,
+                              **effective.values()}, indent=2))
+        except (ValueError, KeyError, OSError) as exc:
+            print(f"settings error: {exc}", file=sys.stderr)
+            raise SystemExit(2) from None
+        raise SystemExit(0)
     if args.command == "stop":
         raise SystemExit(_systemctl(args.command))
     if args.command in {"start", "restart"}:

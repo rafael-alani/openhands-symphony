@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .config import Config
 from .execution import ProviderSlots
-from .ideas_contract import IdeaContractError, parse_runtime, validate_spec
+from .ideas_contract import IdeaContractError, parse_runtime, spec_settings, validate_spec
 from .ideas_github import IdeasGitHubBackend
 from .ideas_preview import IdeaPreview, PreviewError
 from .ideas_progress import (
@@ -68,7 +68,8 @@ class IdeasCoordinator:
         try:
             validate_spec(snapshot.spec_content, snapshot.repository)
             runtime = parse_runtime(snapshot.runtime_content)
-        except IdeaContractError as exc:
+            runtime.settings.overlay(spec_settings(snapshot.spec_content, snapshot.repository)).for_provider(runtime.provider)
+        except ValueError as exc:
             raise IdeasIntakeError(str(exc)) from None
         run, created, superseded = self.store.ensure_idea_run(snapshot, runtime.provider)
         for previous in superseded:
@@ -439,7 +440,11 @@ class IdeasCoordinator:
                 except (VaultError, OSError) as exc:
                     raise StaleIdeaError(str(exc)) from exc
             with self._provider_slot(run, provider):
-                provider_run = provider.start(worktree, prompt, run.id)
+                settings = self.config.agent_settings(
+                    provider.name, run.repository,
+                    runtime.settings.overlay(spec_settings(run.spec_content, run.repository)),
+                )
+                provider_run = provider.start(worktree, prompt, run.id, settings=settings)
                 run = self.store.begin_idea_attempt(
                     run.id,
                     conversation_id=provider_run.conversation_id,

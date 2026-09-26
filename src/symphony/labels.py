@@ -1,4 +1,8 @@
+from .agent_settings import REASONING_EFFORTS, SPEEDS
+
 LABEL_CONTRACT: dict[str, tuple[str, str]] = {
+    **{f"reasoning:{value}": ("1F6FEB", f"Codex reasoning effort: {value}") for value in REASONING_EFFORTS},
+    **{f"speed:{value}": ("1F6FEB", f"Codex processing speed: {value}") for value in SPEEDS},
     "agent:ready": ("0E8A16", "Ready for autonomous implementation"),
     "agent:claude": ("D4A27F", "Route implementation to Claude Code"),
     "agent:codex": ("1F6FEB", "Route implementation to Codex"),

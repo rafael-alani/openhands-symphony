@@ -2,6 +2,10 @@
 
 OpenHands Symphony is a self-hosted, durable GitHub issue-to-draft-PR companion orchestrator for a dedicated Ubuntu VM. OpenHands Agent Canvas is the UI and agent server; a small provider-neutral service supplies the scheduling semantics Canvas automations currently lack. Claude Code and Codex use ACP. An Antigravity adapter bridges ACP to the official `agy --print` interface, but the example configuration keeps it disabled until a subscription-backed Ubuntu smoke run passes. Provider login belongs to the worker account, and production merges are always human-controlled.
 
+Codex work defaults to **Extra high reasoning / Normal speed**. Choose overrides
+in Obsidian project properties or GitHub issue labels, or configure defaults per
+provider/repository. See [reasoning and speed controls](docs/agent-settings.md).
+
 The design borrows only the requested ClawSweeper patterns—analysis/mutation separation, exact-item intake plus reconciliation, durable per-item state, leases, a canonical status comment, and bounded loops. No ClawSweeper repository or code is cloned, indexed, vendored, or required.
 
 ## Safe default flow

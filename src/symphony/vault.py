@@ -17,6 +17,7 @@ from urllib.parse import quote
 
 import yaml
 
+from .agent_settings import AgentSettings
 from .config import Config, RepositoryConfig
 from .github import GhCLIBackend, GitHubError
 from .ideas_contract import git_blob_hash
@@ -55,12 +56,17 @@ class Note:
     mode: str
     repository: str | None
     body: str
+    settings: AgentSettings = AgentSettings()
+
+    def spec_header(self, repository: str) -> str:
+        overrides = "".join(f"{key}: {value}\n" for key, value in self.settings.values().items())
+        return f"---\nsymphony: idea\nrepo: {repository}\n{overrides}---\n\n"
 
     def spec(self, repository: str) -> bytes:
         body = self.body
         if not re.search(r"(?m)^##[ \t]+\S", body):
             body = "## Project\n\n" + body
-        return f"---\nsymphony: idea\nrepo: {repository}\n---\n\n{body}".encode()
+        return (self.spec_header(repository) + body).encode()
 
 
 def read_note(path: Path) -> Note | None:
@@ -83,7 +89,11 @@ def read_note(path: Path) -> Note | None:
         if not isinstance(repository, str):
             raise VaultError("repo must be owner/name")
         validate_repository_name(repository)
-    return Note(path, raw, match.end(), mode, repository, text[match.end():])
+    try:
+        settings = AgentSettings.parse(fields)
+    except ValueError as exc:
+        raise VaultError(str(exc)) from exc
+    return Note(path, raw, match.end(), mode, repository, text[match.end():], settings)
 
 
 def _atomic_write(path: Path, content: bytes) -> None:

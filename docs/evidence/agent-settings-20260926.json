@@ -1,0 +1,31 @@
+{
+  "implementation_commit": "f80c11a3aefe5ec7f174df6e36a62da635828a5c",
+  "branch": "codex/reasoning-speed-controls",
+  "staged_checkout": "/home/afa/symphony-settings-release",
+  "host": "VM101 / 192.168.0.126",
+  "wheel_sha256": "2d566c56f622367778dda5b23352bf766c22664a754ee223ec85fe25e4775a18",
+  "linux_validation": {
+    "symphony_tests": 373,
+    "legacy_bridge_tests": 21,
+    "failures": 0,
+    "lint": "passed",
+    "reports": "/home/afa/symphony-settings-preflight/linux-*.xml",
+    "staged_cli_defaults": {"reasoning_effort": "xhigh", "speed": "normal"}
+  },
+  "native_codex_config_probe": {
+    "cli_version": "0.144.4",
+    "temporary_home": true,
+    "model_turns": 0,
+    "normal_clears_inherited_fast": true,
+    "fast_wire_response": "priority",
+    "adapter_alias_fix": "codex-acp 1.1.4 patch validated against installed source"
+  },
+  "deployment": {
+    "status": "staged; interactive sudo required",
+    "observed_running_commit": "36992f3ffc0b64cd2bdb3e1bf6dc6c9a9e065070",
+    "observed_health": "ok",
+    "authenticated_adapter_probe": "pending administrative installation",
+    "rollback_creation": "pending administrative installation",
+    "live_new_defaults": "not yet verified"
+  }
+}

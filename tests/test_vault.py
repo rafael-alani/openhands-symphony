@@ -12,6 +12,7 @@ from symphony.ideas_contract import validate_spec
 from symphony.models import IdeaSnapshot, JobState
 from symphony.store import Store
 from symphony.vault import GhVaultBackend, VaultBridge, VaultError, attach_repository, read_note
+from symphony.vault_markup import strip_annotations
 
 
 class Backend:
@@ -334,12 +335,16 @@ def test_note_to_scheduler_to_git_publication_and_back_to_vault(tmp_path, folder
     progress = root / "_symphony/solo--idea/PROGRESS.md"
     assert b"**done**" in progress.read_bytes()
     if not folder_checklist:
-        assert note.read_text().endswith("Build a greeting app.\n")
+        assert strip_annotations(note.read_text()).endswith("Build a greeting app.\n")
     else:
         assert "- [x] [[Greeting]]" in note.read_text()
         assert "<project-checklist>" in provider.starts[0][1]
         assert "- [ ] Greeting.md" in provider.starts[0][1]
     assert len(provider.starts) == 1
+    assert "Symphony: Published" in note.read_text()
+    assert "Current status" in note.read_text()
+    assert "symphony-task:" not in provider.starts[0][1]
+    assert "symphony-status:" not in provider.starts[0][1]
     if folder_checklist:
         scheduler = Scheduler(config, store, coordinator, ideas)
         try:

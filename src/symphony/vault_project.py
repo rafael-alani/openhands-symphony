@@ -8,12 +8,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
+from .vault_markup import VaultError, source_slice, strip_annotations
+
 if TYPE_CHECKING:
     from .vault import Note
-
-
-class VaultError(ValueError):
-    pass
 
 
 WAYPOINT = re.compile(r"%%\s*Begin Waypoint\s*%%.*?%%\s*End Waypoint\s*%%", re.S | re.I)
@@ -25,6 +23,7 @@ MAX_FILES = 100
 
 
 def without_waypoints(text: str) -> str:
+    text = strip_annotations(text)
     if len(re.findall(r"%%\s*Begin Waypoint\s*%%", text, re.I)) != len(WAYPOINT.findall(text)):
         raise VaultError("Waypoint index is incomplete; waiting for Obsidian to finish writing")
     return WAYPOINT_MARKER.sub("", WAYPOINT.sub("", text)).rstrip()
@@ -33,7 +32,8 @@ def without_waypoints(text: str) -> str:
 def visible_checklist(text: str) -> str:
     """Mask generated indexes and code examples without moving character offsets."""
     without_waypoints(text)  # Validate delimiters before treating any links as instructions.
-    masked = WAYPOINT.sub(lambda m: "".join("\n" if c == "\n" else " " for c in m[0]), text)
+    masked = strip_annotations(text, mask=True)
+    masked = WAYPOINT.sub(lambda m: "".join("\n" if c == "\n" else " " for c in m[0]), masked)
     lines = masked.splitlines(keepends=True)
     fence = ""
     for index, line in enumerate(lines):
@@ -157,9 +157,9 @@ def compile_project(note: Note, repository: str, vault: Path) -> ProjectSnapshot
                     raise VaultError(f"checklist file is another project: {key}")
                 child = child[header.end():]
             content = without_waypoints(child).replace("\r\n", "\n")
-            original_line = note.body[offset - note.header_end:offset - note.header_end + len(line)]
+            original_line = source_slice(note.body, offset - note.header_end, offset - note.header_end + len(line))
             row = original_line[:check.start(1)] + " " + original_line[check.end(1):]
-            row = row.strip().replace("\r\n", "\n")
+            row = strip_annotations(row).strip().replace("\r\n", "\n")
             digest = hashlib.sha256((row + "\n" + content).encode()).hexdigest()
             files.append(ChecklistFile(key, path, raw, digest, check[1].lower() == "x",
                                        offset + check.start(1), row, content))
@@ -173,7 +173,7 @@ def compile_project(note: Note, repository: str, vault: Path) -> ProjectSnapshot
                 "- [ ] [[General Idea]] outside Waypoint before running"
             )
         # Preserve the existing single-note contract when no Waypoint is present.
-        body = note.body if not WAYPOINT.search(note.body) and not WAYPOINT_MARKER.search(note.body) else body
+        body = strip_annotations(note.body) if not WAYPOINT.search(note.body) and not WAYPOINT_MARKER.search(note.body) else body
         return ProjectSnapshot(note, replace(note, body=body).spec(repository), ())
     # One progress section per subfile, regardless of the headings inside that file.
     def demote(text: str) -> str:

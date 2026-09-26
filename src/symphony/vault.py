@@ -26,7 +26,8 @@ from .intake import validate_repository_name
 from .labels import LABEL_CONTRACT
 from .store import Store
 from .validation import redact
-from .vault_project import VaultError, compile_project
+from .vault_project import ProjectSnapshot, VaultError, compile_project
+from .vault_status import render_input_error, render_status
 
 MODES = {"idea", "github", "paused"}
 
@@ -128,7 +129,7 @@ def attach_repository(note: Note, repository: str, backup_dir: Path) -> Note:
 
 
 def replace_note(note: Note, updated: bytes, backup_dir: Path) -> Note:
-    """Guarded wrapper-only edit: repository routing or checklist characters, never prose."""
+    """Guarded wrapper-only edit: routing, checkbox characters, and owned status annotations."""
     if note.path.read_bytes() != note.raw:
         raise VaultError("note changed during update; retry after it settles")
     backup = backup_dir / f"{hashlib.sha256(note.raw).hexdigest()}.md"
@@ -140,6 +141,7 @@ def replace_note(note: Note, updated: bytes, backup_dir: Path) -> Note:
 
     descriptor, temporary = tempfile.mkstemp(prefix=".symphony-register-", dir=note.path.parent)
     staged = Path(temporary)
+    exchanged = False
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(updated)
@@ -147,6 +149,7 @@ def replace_note(note: Note, updated: bytes, backup_dir: Path) -> Note:
             os.fsync(handle.fileno())
         staged.chmod(note.path.stat().st_mode & 0o777)
         _atomic_exchange(note.path, staged)
+        exchanged = True
         observed = staged.read_bytes()
         if observed != note.raw:
             _atomic_write(backup_dir / f"{hashlib.sha256(observed).hexdigest()}.md", observed)
@@ -154,6 +157,13 @@ def replace_note(note: Note, updated: bytes, backup_dir: Path) -> Note:
                 _atomic_exchange(note.path, staged)
             raise VaultError("note changed during update; concurrent bytes preserved")
     finally:
+        # A second edit can race the rollback exchange too. Never discard the
+        # inode returned by any exchange without retaining its final bytes.
+        if exchanged and staged.exists():
+            retained = staged.read_bytes()
+            recovery = backup_dir / f"{hashlib.sha256(retained).hexdigest()}.md"
+            if not recovery.exists():
+                _atomic_write(recovery, retained)
         staged.unlink(missing_ok=True)
     result = read_note(note.path)
     if result is None:
@@ -331,6 +341,34 @@ class VaultBridge:
         finally:
             self.store.release_operation_lock("vault-intake", self.owner)
 
+    def _write_note_status(self, note: Note, snapshot: ProjectSnapshot | None, repository: str) -> None:
+        project = next(item for item in self.store.vault_projects() if item["repository"] == repository)
+        runs = [run for run in self.store.list_idea_runs() if run.repository == repository]
+        run = runs[-1] if runs else None
+        idea_project = self.store.get_idea_project(repository)
+        with self.store.connect() as connection:
+            entries = {row["source"]: dict(row) for row in connection.execute(
+                "SELECT source,content_hash,done,completed_commit FROM vault_checklist WHERE repository=?",
+                (repository,),
+            )}
+        snapshot = snapshot or ProjectSnapshot(note, b"", ())
+        relative = Path(repository.replace("/", "--"))
+        has_progress = (self.base_config.vault.path / "_symphony" / relative / "PROGRESS.md").is_file()
+        updated, status = render_status(
+            snapshot, project, run, entries, self.base_config.vault.path,
+            self.base_config.ideas.progress_path,
+            idea_project.preview_state if idea_project else "Not published",
+            has_progress=has_progress,
+        )
+        if note.mode == "idea":
+            proposed = replace(note, raw=updated, body=updated.decode("utf-8-sig")[note.header_end:])
+            if compile_project(proposed, repository, self.base_config.vault.path).spec != snapshot.spec:
+                raise VaultError("status update would change the accepted specification; source note preserved")
+        snapshot.verify()
+        self._safe_output(relative / "STATUS.md", status)
+        if updated != note.raw:
+            replace_note(note, updated, self.base_config.service.state_dir / "vault-note-originals")
+
     def _reconcile(self) -> list[str]:
         config = self.base_config
         root = config.vault.path / config.vault.projects_dir
@@ -418,6 +456,7 @@ class VaultBridge:
                 if note.mode != "paused":
                     for relative, content in self.backend.progress(repository, config.ideas.progress_path).items():
                         self._safe_output(Path(repository.replace("/", "--")) / relative, content)
+                self._write_note_status(note, snapshot, repository)
             except Exception as exc:
                 detail = redact(str(exc), 1500)
                 self.last_errors.append(f"{repository}: {detail}")
@@ -430,6 +469,12 @@ class VaultBridge:
         lines = ["# Symphony projects", "", "Syncthing carries notes and generated results. Existing repositories and issues are retained.", ""]
         for project in self.store.vault_projects():
             repo = project["repository"]
+            if project["error"]:
+                with self.store.connect() as connection:
+                    sources = [row["source"] for row in connection.execute(
+                        "SELECT source FROM vault_checklist WHERE repository=? ORDER BY source", (repo,),
+                    )]
+                self._safe_output(Path(repo.replace("/", "--")) / "STATUS.md", render_input_error(project, sources))
             lines.append(f"- [{repo}](https://github.com/{repo}): {project['mode']} → {project['desired_mode']} ({project['status']}); preview port {project['port']}")
             lines.append(f"  [Progress]({repo.replace('/', '--')}/PROGRESS.md)")
             runs = [run for run in self.store.list_idea_runs() if run.repository == repo]

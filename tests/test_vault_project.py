@@ -7,6 +7,7 @@ from test_vault import setup
 
 from symphony.models import IdeaRunState, IdeaSnapshot, ValidationResult
 from symphony.vault import VaultBridge, VaultError, read_note
+from symphony.vault_markup import strip_annotations
 from symphony.vault_project import compile_project
 
 
@@ -156,7 +157,9 @@ def test_code_examples_are_not_followed_and_bom_crlf_survive_checkbox_update(tmp
     before = note.read_bytes()
     store.complete_vault_checklist(repo, [(compiled.files[0].key, compiled.files[0].content_hash)], "commit")
     assert bridge.reconcile() == []
-    assert note.read_bytes() == before.replace(b"- [ ] [[Feature]]", b"- [x] [[Feature]]")
+    expected = strip_annotations(before.decode("utf-8-sig")).replace("- [ ] [[Feature]]", "- [x] [[Feature]]")
+    assert note.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert strip_annotations(note.read_bytes().decode("utf-8-sig")) == expected
 
 
 @pytest.mark.parametrize("outcome", ["success", "question", "failed", "partial"])

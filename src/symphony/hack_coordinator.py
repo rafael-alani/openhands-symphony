@@ -310,7 +310,8 @@ class HackCoordinator:
                 if not acquired:
                     raise HackError("provider concurrency is disabled")
                 campaign = self._require_running(task)
-                provider_run = provider.start(worktree, self._prompt(task, campaign), task["id"])
+                provider_run = provider.start(worktree, self._prompt(task, campaign), task["id"],
+                    settings=self.config.agent_settings(provider.name, campaign["repository"]))
                 with self._active_lock:
                     self._active[task["id"]] = (provider, provider_run, original["lease_owner"], original["attempt"])
                 task = update(conversation_id=provider_run.conversation_id, session_id=provider_run.session_id)

@@ -6,6 +6,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from .agent_settings import AgentSettings
 from .intake import validate_repository_name
 
 HEADER_PATTERN = re.compile(rb"(?m)^##[ \t]+([^\r\n]+)[ \t]*(?:\r?\n|$)")
@@ -22,9 +23,10 @@ class IdeaRuntime:
     port: int
     health_path: str
     startup_timeout_seconds: int
+    settings: AgentSettings = AgentSettings()
 
 
-def validate_spec(spec: bytes, repository: str) -> None:
+def spec_settings(spec: bytes, repository: str) -> AgentSettings:
     try:
         text = spec.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -39,12 +41,12 @@ def validate_spec(spec: bytes, repository: str) -> None:
     values: dict[str, str] = {}
     for line in lines[1:end]:
         if not line or line.lstrip().startswith("#") or ":" not in line:
-            raise IdeaContractError("idea spec frontmatter must contain only symphony and repo scalars")
+            raise IdeaContractError("idea spec frontmatter allows only symphony, repo, reasoning_effort, and speed scalars")
         key, value = (part.strip() for part in line.split(":", 1))
-        if key not in {"symphony", "repo"} or key in values or not value:
-            raise IdeaContractError("idea spec frontmatter must contain exactly one symphony and repo key")
+        if key not in {"symphony", "repo", "reasoning_effort", "speed"} or key in values or not value:
+            raise IdeaContractError("idea spec frontmatter requires exactly one symphony and repo key, with optional reasoning_effort and speed")
         values[key] = value
-    if values != {"symphony": "idea", "repo": repository}:
+    if values.get("symphony") != "idea" or values.get("repo") != repository:
         raise IdeaContractError("idea spec frontmatter must set symphony: idea and match the repository")
     try:
         validate_repository_name(values["repo"])
@@ -52,6 +54,14 @@ def validate_spec(spec: bytes, repository: str) -> None:
         raise IdeaContractError(str(exc)) from exc
     if not HEADER_PATTERN.search(spec):
         raise IdeaContractError("idea spec must contain at least one ## section")
+    try:
+        return AgentSettings.parse(values)
+    except ValueError as exc:
+        raise IdeaContractError(str(exc)) from exc
+
+
+def validate_spec(spec: bytes, repository: str) -> None:
+    spec_settings(spec, repository)
 
 
 def parse_runtime(content: bytes) -> IdeaRuntime:
@@ -83,7 +93,11 @@ def parse_runtime(content: bytes) -> IdeaRuntime:
         raise IdeaContractError("preview.health_path must be an absolute path without a query or fragment")
     if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
         raise IdeaContractError("preview.startup_timeout_seconds must be a positive integer")
-    return IdeaRuntime(provider, tuple(start), port, health_path, timeout)
+    try:
+        settings = AgentSettings.parse(raw).for_provider(provider)
+    except ValueError as exc:
+        raise IdeaContractError(str(exc)) from exc
+    return IdeaRuntime(provider, tuple(start), port, health_path, timeout, settings)
 
 
 def preview_argv(runtime: IdeaRuntime) -> tuple[str, ...]:

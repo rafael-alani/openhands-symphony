@@ -56,6 +56,9 @@ class IssueSnapshot:
     def content_hash(self) -> str:
         """Hash the specification, excluding expected label/comment churn."""
         value = {"repository": self.repository, "number": self.number, "title": self.title, "body": self.body}
+        settings = sorted(label for label in self.labels if label.startswith(("reasoning:", "speed:")))
+        if settings:
+            value["agent_settings"] = settings
         return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def revision_hash(self) -> str:

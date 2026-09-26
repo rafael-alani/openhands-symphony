@@ -41,6 +41,7 @@ def build_providers(config: Config) -> dict[str, ProviderAdapter]:
             api_key_file=config.service.agent_server_api_key_file,
             auth_marker_file=provider_config.auth_marker_file,
             permission_mode=provider_config.permission_mode,
+            settings=config.agent_settings(name),
         )
     return providers
 

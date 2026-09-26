@@ -45,6 +45,12 @@ def create_app(
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/agent-settings")
+    def agent_settings() -> dict[str, Any]:
+        # Loopback-only, non-secret operational defaults, also useful after an update.
+        return {name: coordinator.config.agent_settings(name).values()
+                for name, provider in coordinator.config.providers.items() if provider.enabled}
+
     @app.post("/webhooks/github")
     async def github_webhook(
         request: Request,

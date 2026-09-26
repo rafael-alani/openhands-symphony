@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from ..agent_settings import INHERIT_SETTINGS, AgentSettings
 from ..models import (
     AuthStatus,
     ProviderCapabilities,
@@ -38,6 +39,7 @@ class OpenHandsACPProvider(ProviderAdapter):
         api_key_file: Path | None = None,
         auth_marker_file: Path | None = None,
         permission_mode: str = "full",
+        settings: AgentSettings = INHERIT_SETTINGS,
     ):
         self.name = name
         self.agent_server_url = agent_server_url.rstrip("/")
@@ -49,6 +51,8 @@ class OpenHandsACPProvider(ProviderAdapter):
         if permission_mode not in {"full", "restricted"}:
             raise ValueError("permission_mode must be full or restricted")
         self.permission_mode = permission_mode
+        defaults = AgentSettings("xhigh", "normal") if name == "codex" else AgentSettings()
+        self.settings = defaults.overlay(settings).for_provider(name)
         self._last_quota = QuotaState()
 
     @property
@@ -143,7 +147,8 @@ class OpenHandsACPProvider(ProviderAdapter):
         except ValueError:
             return response.text
 
-    def start(self, workspace: Path, prompt: str, run_id: str, *, read_only: bool = False) -> ProviderRun:
+    def start(self, workspace: Path, prompt: str, run_id: str, *, read_only: bool = False,
+              settings: AgentSettings = INHERIT_SETTINGS) -> ProviderRun:
         if not self.capabilities.autonomous_available:
             raise OpenHandsProviderError(self.capabilities.limitation)
         if not self.acp_command:
@@ -156,12 +161,21 @@ class OpenHandsACPProvider(ProviderAdapter):
             session_mode = {"claude": "bypassPermissions", "codex": "agent-full-access"}.get(self.name, "default")
         else:
             session_mode = {"claude": "acceptEdits", "codex": "agent"}.get(self.name, "default")
+        effective = self.settings.overlay(settings).for_provider(self.name)
+        environment = {}
+        if self.name == "codex":
+            # codex-acp 1.1.4 accepts thread config via CODEX_CONFIG, not CLI -c.
+            # JSON null clears inherited Fast mode for an explicitly normal run.
+            codex_config = {"model_reasoning_effort": effective.reasoning_effort,
+                            "service_tier": "fast" if effective.speed == "fast" else None}
+            environment["CODEX_CONFIG"] = json.dumps(codex_config)
         payload = {
             "workspace": {"working_dir": str(workspace.resolve()), "kind": "LocalWorkspace"},
             "agent_settings": {
                 "agent_kind": "acp",
                 "acp_server": server_kind,
                 "acp_command": list(self.acp_command),
+                "acp_env": environment,
                 "acp_args": [],
                 "acp_session_mode": session_mode,
                 "acp_prompt_timeout": 600.0,
@@ -173,7 +187,7 @@ class OpenHandsACPProvider(ProviderAdapter):
                 "run": False,
             },
             "max_iterations": 500,
-            "tags": {"runid": run_id.replace("-", "")[:32], "provider": self.name},
+            "tags": {"runid": run_id.replace("-", "")[:32], "provider": self.name, **effective.values()},
         }
         created = self._request("POST", "/api/conversations", json=payload)
         conversation_id = str(created.get("id") or created.get("conversation_id") or "")

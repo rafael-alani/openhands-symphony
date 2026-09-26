@@ -78,7 +78,7 @@ def test_provider_launch_failure_stops_without_consuming_an_implementation_attem
     store = Store(config.service.state_dir / "state.db")
 
     class LaunchFailure(FakeProvider):
-        def start(self, worktree, prompt, job_id, *, read_only=False):
+        def start(self, worktree, prompt, job_id, *, read_only=False, settings=None):
             raise OpenHandsProviderError("ACP launch failed")
 
     provider = LaunchFailure("codex")

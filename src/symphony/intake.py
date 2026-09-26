@@ -4,6 +4,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from .agent_settings import SETTING_LABELS, AgentSettings
 from .models import IssueSnapshot
 
 IMPLEMENTATION_LABELS = {
@@ -17,6 +18,7 @@ REVIEW_LABELS = {
     "review:antigravity": "antigravity",
 }
 USER_CONTROLLED_LABELS = {
+    *SETTING_LABELS,
     "agent:ready",
     *IMPLEMENTATION_LABELS,
     "review:required",
@@ -67,6 +69,10 @@ def route(snapshot: IssueSnapshot, available_reviewers: set[str] | None = None) 
     implementation = [provider for label, provider in IMPLEMENTATION_LABELS.items() if label in labels]
     if len(implementation) != 1:
         return RoutingDecision(False, reason="exactly one implementation-provider label is required")
+    try:
+        AgentSettings.from_labels(snapshot.labels).for_provider(implementation[0])
+    except ValueError as exc:
+        return RoutingDecision(False, reason=str(exc))
 
     review_required = "review:required" in labels
     requested_reviewers = [provider for label, provider in REVIEW_LABELS.items() if label in labels]

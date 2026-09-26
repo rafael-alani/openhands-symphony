@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .agent_settings import INHERIT_SETTINGS, AgentSettings
+
 DEFAULT_CONFIG = "/etc/openhands-symphony/config.toml"
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
@@ -99,6 +101,8 @@ class ProviderConfig:
     timeout_seconds: int = 7200
     manual_command: tuple[str, ...] = ()
     permission_mode: str = "full"
+    reasoning_effort: str | None = None
+    speed: str | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +114,8 @@ class RepositoryConfig:
     setup_script: str = ""
     instruction: str = ""
     approval_policy: str = "safe-code-only"
+    reasoning_effort: str | None = None
+    speed: str | None = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +131,13 @@ class Config:
 
     def repository(self, name: str) -> RepositoryConfig:
         return self.repositories.get(name, RepositoryConfig())
+
+    def agent_settings(self, provider: str, repository: str = "", override: AgentSettings = INHERIT_SETTINGS) -> AgentSettings:
+        defaults = AgentSettings("xhigh", "normal") if provider == "codex" else AgentSettings()
+        configured = self.providers[provider]
+        defaults = defaults.overlay(AgentSettings(configured.reasoning_effort, configured.speed))
+        repo = self.repository(repository)
+        return defaults.overlay(AgentSettings(repo.reasoning_effort, repo.speed)).overlay(override).for_provider(provider)
 
     def concurrency_key(self, repository: str, labels: tuple[str, ...] = ()) -> str:
         cfg = self.repository(repository)
@@ -402,6 +415,7 @@ def load_config(path: str | Path | None = None) -> Config:
             timeout_seconds=int(value.get("timeout_seconds", 7200)),
             manual_command=_command(value.get("manual_command")),
             permission_mode=str(value.get("permission_mode", "restricted" if name == "antigravity" else "full")),
+            **AgentSettings.parse(value).for_provider(name).values(),
         )
 
     repositories: dict[str, RepositoryConfig] = {}
@@ -414,6 +428,7 @@ def load_config(path: str | Path | None = None) -> Config:
             setup_script=str(value.get("setup_script", "")),
             instruction=str(value.get("instruction", "")),
             approval_policy=str(value.get("approval_policy", "safe-code-only")),
+            **AgentSettings.parse(value).values(),
         )
 
     hack_raw = raw.get("hack", {})

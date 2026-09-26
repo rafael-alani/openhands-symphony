@@ -58,3 +58,23 @@ preflight. The user approves installation through the existing SSH/sudo command.
 Afterward, inspect normal reconciliation and generated reports. A live retry
 acceptance check requires the user's own checkbox change; do not edit a vault
 note or reset a production run manually to exercise it.
+
+## Release validation, 2026-09-26
+
+Release `195b7307a789d972174c34c793df70730559fe51` is published on
+`codex/obsidian-checkbox-retry` and staged with its matching wheel at
+`/home/afa/symphony-checkbox-195b730` on VM101. All 321 tests passed locally
+(29.63 seconds) and on Linux (13.58 seconds), including 25 new regression
+cases and the extended real-Git scheduler test. Ruff and whitespace checks
+passed. The updater's read-only compatibility preflight passed against
+installed release `ef6f8b1`.
+
+The existing service is active and its health endpoint reports OK. Read-only
+preservation evidence records hashes of the canonical project source, both
+linked task files, and the Waypoint block. Both tasks are currently checked;
+the latest recorded run is `902ef7e2-bd81-4418-b997-5d24e5c4aaaa`.
+
+Installation remains pending the user's SSH/sudo approval. No production note,
+task state, or run was manually changed to stage or test this release. After
+installation, verify normal projection and retained history without triggering
+work, then verify one user-requested checkbox retry through the normal scheduler.

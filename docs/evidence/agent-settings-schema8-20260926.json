@@ -1,0 +1,23 @@
+{
+  "branch": "codex/reasoning-speed-live",
+  "implementation_commit": "443cd756032ce19153678326bf3bad978317d3dc",
+  "live_baseline_commit": "36992f3ffc0b64cd2bdb3e1bf6dc6c9a9e065070",
+  "schema_version": 8,
+  "store_source_and_installed_runtime_sha256": "9e79cef871c92c4a30ed8e33bcbec74e64f4be858921508cb99a7e5dfc9766c1",
+  "wheel_sha256": "496764a1e81b91870820054df75815c3a9d1cef5a08695466ed8c8647bda596a",
+  "host": "VM101 / 192.168.0.126",
+  "staged_checkout": "/home/afa/symphony-settings-release",
+  "validation": {
+    "local_tests": 252,
+    "linux_tests": 252,
+    "linux_legacy_bridge_tests": 21,
+    "lint": "passed",
+    "software_preflight": "passed against deployed source, installed runtime, wheel and adapter",
+    "reports": "/home/afa/symphony-settings-preflight/linux-schema8-*.xml"
+  },
+  "prior_install_attempt": "Refused before mutations because the earlier staged branch included the separate undeployed schema-9 Hack work",
+  "deployment_status": "staged; interactive sudo required",
+  "observed_service": "active; healthz ok on the original version",
+  "authenticated_adapter_probe": "runs before service downtime during installation",
+  "rollback_creation": "pending installation"
+}

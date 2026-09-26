@@ -25,6 +25,20 @@ The Markdown report includes each setup or validation command, exit status, time
 
 Versions that counted claims or rejected provider launches as attempts can leave a no-conversation job at `retry-limit` after a setup or workspace-boundary failure. After upgrading, one explicit `/agent retry` detects the durable pre-conversation failure history, resets only the polluted counter, and records the reset in the control event. A run with a provider conversation or PR is not reset.
 
+## Ideas setup repair
+
+If an Ideas implementation breaks setup, its next attempt keeps the worktree
+and receives the redacted setup error so it can repair its own code. The
+post-implementation setup and preview checks still gate publication; repair
+attempts count toward `scheduler.max_attempts`. This also handles a retained
+queued `setup-failed` run after upgrading, without editing SQLite or requesting
+a manual retry. A changed accepted spec supersedes the old run as usual.
+
+An initial setup failure, or an exception before a provider accepts the next
+attempt, fails with diagnostic details instead of cycling indefinitely without
+incrementing the attempt counter. No attempt counter or persisted state is reset
+by the update. Existing published runs remain published.
+
 ## Backup
 
 Stop the stack for the simplest consistent filesystem backup:

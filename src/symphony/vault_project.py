@@ -167,6 +167,11 @@ def compile_project(note: Note, repository: str, vault: Path) -> ProjectSnapshot
         offset += len(line)
     body = without_waypoints("".join(normalized)).replace("\r\n", "\n")
     if not files:
+        if not body.strip():
+            raise VaultError(
+                "project brief is empty; add a brief or a checklist link such as "
+                "- [ ] [[General Idea]] outside Waypoint before running"
+            )
         # Preserve the existing single-note contract when no Waypoint is present.
         body = note.body if not WAYPOINT.search(note.body) and not WAYPOINT_MARKER.search(note.body) else body
         return ProjectSnapshot(note, replace(note, body=body).spec(repository), ())

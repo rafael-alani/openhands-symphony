@@ -21,7 +21,7 @@ from symphony.execution import ProviderSlots
 from symphony.ideas_contract import IdeaContractError, git_blob_hash, parse_runtime, preview_argv, validate_spec
 from symphony.ideas_coordinator import IdeasCoordinator
 from symphony.ideas_preview import IdeaPreview, PreviewEvidence
-from symphony.models import IdeaRunState, IdeaSnapshot, ProviderOutcome
+from symphony.models import IdeaRunState, IdeaSnapshot, ProviderOutcome, ValidationResult
 from symphony.preview_queue import PreviewQueue
 from symphony.providers.fake import FakeProvider
 from symphony.store import Store
@@ -406,6 +406,83 @@ def test_pre_provider_failure_does_not_requeue_forever(tmp_path, monkeypatch):
     assert run.attempt == 0
     assert run.state == IdeaRunState.FAILED
     assert not store.claim_next_idea("another-worker", 60, 2, {"codex": 2})
+
+
+@pytest.mark.parametrize("repair", [True, False])
+def test_agent_can_repair_its_failed_setup_with_bounded_attempts(tmp_path, monkeypatch, repair):
+    remote, _ = _idea_remote(tmp_path)
+    provider = FakeProvider("codex", write_files={"setup-state.txt": "broken"})
+    config, store, coordinator, workspaces = _coordinator(tmp_path, provider, remote)
+
+    def setup(path, *_args):
+        marker = path / "setup-state.txt"
+        broken = marker.exists() and marker.read_text() == "broken"
+        return ValidationResult(("setup",), 1 if broken else 0, "start", "end",
+                                "missing dependency; token=fixture-secret" if broken else "ready")
+
+    monkeypatch.setattr(workspaces, "run_setup", setup)
+    coordinator.observe_repository("solo/idea")
+    first = coordinator.run_claimed(_claim(store, config))
+    assert first.state == IdeaRunState.QUEUED
+    assert first.attempt == 1
+    assert workspaces.push_attempts == 0
+    # Older releases left this same durable run queued at setup-failed.
+    store.update_idea_run(first.id, phase="setup-failed", question="repository setup failed")
+    provider.write_files = {"setup-state.txt": "fixed" if repair else "broken"}
+
+    # A service restart must use persisted state and the retained worktree.
+    coordinator = IdeasCoordinator(config, store, LocalIdeasGitHub(remote), {"codex": provider},
+                                   ProviderSlots(config.scheduler.provider_concurrency, {"codex"}))
+    coordinator.workspaces = workspaces
+    coordinator.preview = FakePreview()
+    for _ in range(config.scheduler.max_attempts - 1):
+        result = coordinator.run_claimed(_claim(store, config))
+        if result.state != IdeaRunState.QUEUED:
+            break
+
+    assert result.state == (IdeaRunState.PUBLISHED if repair else IdeaRunState.FAILED)
+    assert result.attempt == (2 if repair else config.scheduler.max_attempts)
+    assert len(provider.starts) == result.attempt
+    assert workspaces.push_attempts == (1 if repair else 0)
+    assert "missing dependency" in provider.starts[1][1]
+    assert "fixture-secret" not in provider.starts[1][1]
+    assert not store.claim_next_idea("another-worker", 60, 2, {"codex": 2})
+
+
+@pytest.mark.parametrize("failure", ["setup-exception", "provider-rejected"])
+def test_retry_pre_provider_exception_does_not_loop_after_previous_attempt(tmp_path, monkeypatch, failure):
+    remote, _ = _idea_remote(tmp_path)
+    provider = FakeProvider("codex", ProviderOutcome.FAILED)
+    config, store, coordinator, workspaces = _coordinator(tmp_path, provider, remote)
+    coordinator.observe_repository("solo/idea")
+    first = coordinator.run_claimed(_claim(store, config))
+    assert first.state == IdeaRunState.QUEUED
+
+    def fail(*_args, **_kwargs):
+        raise OSError("launch unavailable")
+
+    monkeypatch.setattr(workspaces if failure == "setup-exception" else provider,
+                        "run_setup" if failure == "setup-exception" else "start", fail)
+    result = coordinator.run_claimed(_claim(store, config))
+    assert result.state == IdeaRunState.FAILED
+    assert result.attempt == 1
+    assert not store.claim_next_idea("another-worker", 60, 2, {"codex": 2})
+
+
+def test_initial_setup_failure_is_reported_without_launching_an_agent(tmp_path, monkeypatch):
+    remote, _ = _idea_remote(tmp_path)
+    provider = FakeProvider("codex")
+    config, store, coordinator, workspaces = _coordinator(tmp_path, provider, remote)
+    monkeypatch.setattr(workspaces, "run_setup", lambda *_args: ValidationResult(
+        ("setup",), 2, "start", "end", "cannot install dependency; password=fixture-secret"))
+    coordinator.observe_repository("solo/idea")
+    result = coordinator.run_claimed(_claim(store, config))
+    assert result.state == IdeaRunState.FAILED
+    assert result.attempt == 0
+    assert "cannot install dependency" in result.question
+    assert "fixture-secret" not in result.question
+    assert not provider.starts
+    assert workspaces.push_attempts == 0
 
 
 def test_non_fast_forward_race_rebases_once_and_keeps_implementation(tmp_path):

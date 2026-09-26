@@ -51,6 +51,30 @@ def test_waypoint_changes_and_status_ticks_do_not_trigger_new_spec(tmp_path):
     assert backend.specs[repo] == spec
 
 
+@pytest.mark.parametrize("body", ["\n", "%% Waypoint %%\n",
+                                 "%% Begin Waypoint %%\n- [[General Idea]]\n%% End Waypoint %%\n"])
+def test_empty_project_waits_for_explicit_brief_and_recovers_on_note_edit(tmp_path, body):
+    bridge, note, store, backend = setup(tmp_path, body=body)
+    (note.parent / "General Idea.md").write_text("Use the documented Immich API to archive external photos.\n")
+    original = note.read_bytes()
+    for _ in range(2):
+        errors = bridge.reconcile()
+        assert any("outside Waypoint" in error for error in errors)
+        assert not backend.repos
+        assert not backend.specs
+        assert note.read_bytes() == original
+        assert store.vault_projects()[0]["mode"] == "paused"
+    status = (bridge.base_config.vault.path / "_symphony/STATUS.md").read_text()
+    assert "outside Waypoint" in status
+
+    note.write_text(note.read_text() + "\n- [ ] [[General Idea]]\n")
+    assert bridge.reconcile() == []
+    project = store.vault_projects()[0]
+    assert project["mode"] == "idea"
+    assert len(backend.repos) == 1
+    assert b"Use the documented Immich API" in backend.specs[project["repository"]]
+
+
 def test_checklist_reopens_changed_file_and_survives_restart(tmp_path):
     bridge, note, child, store, backend = project(tmp_path)
     assert bridge.reconcile() == []

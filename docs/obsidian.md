@@ -137,6 +137,11 @@ unchanged and excluded from the specification; it does not enroll every linked
 note as work. Child links are not followed recursively. A main note without a
 linked checklist still works as a single-file project.
 
+An empty main note, including one containing only Waypoint, waits with an
+actionable error in `_symphony/STATUS.md`. It does not create a repository or
+start an agent with an empty brief. Add prose or an explicit checklist link
+outside Waypoint; the next settled scan accepts the project automatically.
+
 Editing the brief, a checklist row's instructions, or a listed subfile creates a
 new combined specification after all those files settle. Reordering a Waypoint
 index, changing its links, and ticking status boxes do not trigger a new build.

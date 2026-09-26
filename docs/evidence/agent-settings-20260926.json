@@ -1,16 +1,20 @@
 {
-  "implementation_commit": "f80c11a3aefe5ec7f174df6e36a62da635828a5c",
+  "implementation_commit": "58a02f3b27d2b2495c914c22041721ee8b298ae6",
   "branch": "codex/reasoning-speed-controls",
   "staged_checkout": "/home/afa/symphony-settings-release",
   "host": "VM101 / 192.168.0.126",
-  "wheel_sha256": "2d566c56f622367778dda5b23352bf766c22664a754ee223ec85fe25e4775a18",
+  "wheel_sha256": "2d012b33d280741d6e677925a88393287f3628c78ffd6a1811b947443460fc24",
   "linux_validation": {
     "symphony_tests": 373,
     "legacy_bridge_tests": 21,
     "failures": 0,
     "lint": "passed",
     "reports": "/home/afa/symphony-settings-preflight/linux-*.xml",
-    "staged_cli_defaults": {"reasoning_effort": "xhigh", "speed": "normal"}
+    "staged_cli_defaults": {
+      "reasoning_effort": "xhigh",
+      "speed": "normal"
+    },
+    "live_api_schema": "Conversation tags require lowercase alphanumeric keys; corrected and regression-tested"
   },
   "native_codex_config_probe": {
     "cli_version": "0.144.4",

@@ -90,7 +90,8 @@ curl -fsS http://127.0.0.1:8787/agent-settings
 ```
 
 The HTTP endpoint is loopback-only and reports no credentials. Each new Canvas
-conversation also records effective `reasoning_effort` and `speed` tags.
+conversation also records effective `reasoningeffort` and `speed` tags (the
+Agent Server requires alphanumeric tag keys).
 Manual chats created directly in Canvas continue to use Canvas's own controls;
 Symphony's defaults apply to work it schedules.
 

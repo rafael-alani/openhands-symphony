@@ -187,7 +187,8 @@ class OpenHandsACPProvider(ProviderAdapter):
                 "run": False,
             },
             "max_iterations": 500,
-            "tags": {"runid": run_id.replace("-", "")[:32], "provider": self.name, **effective.values()},
+            "tags": {"runid": run_id.replace("-", "")[:32], "provider": self.name,
+                     **{key.replace("_", ""): value for key, value in effective.values().items()}},
         }
         created = self._request("POST", "/api/conversations", json=payload)
         conversation_id = str(created.get("id") or created.get("conversation_id") or "")

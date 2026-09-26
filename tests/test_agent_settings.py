@@ -85,7 +85,8 @@ def test_launch_sends_per_conversation_config_without_mutating_shared_defaults(t
                       "service_tier": "fast" if expected.speed == "fast" else None}
     assert payloads[0]["tags"]["speed"] == expected.speed
     assert payloads[1]["tags"]["speed"] == "normal"
-    assert payloads[1]["tags"]["reasoning_effort"] == "xhigh"
+    assert payloads[1]["tags"]["reasoningeffort"] == "xhigh"
+    assert all(key.isalnum() and key == key.lower() for payload in payloads for key in payload["tags"])
     assert payloads[1]["agent_settings"]["acp_session_mode"] == "read-only"
 
 
@@ -162,4 +163,3 @@ def test_pinned_acp_alias_patch_is_idempotent_and_fails_before_partial_write(tmp
     with pytest.raises(ValueError, match="Unexpected"):
         module.patch(package)
     assert target.read_text() == broken
-
